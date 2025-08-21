@@ -8,7 +8,7 @@ del C:\osdcloud\Config\Scripts\Shutdown\create_unattended.ps1
 
 timeout /t 60
 
-#start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/ScriptPart2.bat -OutFile C:\osdcloud\Scripts\SetupComplete\ScriptPart2.bat; #.\ScriptPart2.bat"
+#start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/install.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\install.ps1; #.\install.ps1"
 
 cmd /c Dism.exe /online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
 

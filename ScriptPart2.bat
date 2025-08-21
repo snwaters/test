@@ -8,7 +8,7 @@ del C:\osdcloud\Config\Scripts\Shutdown\create_unattended.ps1
 
 timeout /t 60
 
-#start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\download_from_github_during_ScriptPart2.ps1"
+#start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/ScriptPart2.bat -OutFile C:\osdcloud\Scripts\SetupComplete\ScriptPart2.bat; #.\ScriptPart2.bat"
 
 cmd /c Dism.exe /online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
 

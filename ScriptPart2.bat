@@ -31,6 +31,7 @@ winget install -e --id Lenovo.DockManager --silent --accept-package-agreements -
 
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\activation.ps1"
+pause
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Windows_update.ps1"
 

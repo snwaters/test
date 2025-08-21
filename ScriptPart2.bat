@@ -8,6 +8,8 @@ del C:\osdcloud\Config\Scripts\Shutdown\create_unattended.ps1
 
 timeout /t 60
 
+#start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\download_from_github_during_ScriptPart2.ps1"
+
 cmd /c Dism.exe /online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
 
 
@@ -28,7 +30,6 @@ winget install -e --id Google.GoogleDrive --silent --accept-package-agreements -
 winget install -e --id Lenovo.SystemUpdate --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
 
 winget install -e --id Lenovo.DockManager --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
-
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\activation.ps1"
 

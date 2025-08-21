@@ -23,7 +23,7 @@ START /WAIT "BGinfo" "C:\osdcloud\Scripts\SetupComplete\BGInfo_11_2021\install.b
 
 winget install -e --id Google.Chrome --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
 
-winget install -e --id Google.Drive --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
+winget install -e --id Google.GoogleDrive --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
 
 winget install -e --id Lenovo.SystemUpdate --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
 

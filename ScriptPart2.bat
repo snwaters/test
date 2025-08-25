@@ -31,8 +31,6 @@ winget install -e --id Lenovo.SystemUpdate --silent --accept-package-agreements 
 
 winget install -e --id Lenovo.DockManager --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine
 
-winget install -e --id Adobe.Acrobat.Reader.64-bit --accept-package-agreements --accept-source-agreements --source winget --scope machine
-
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\activation.ps1"
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Windows_update.ps1"

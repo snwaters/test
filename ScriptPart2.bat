@@ -3,6 +3,8 @@
         echo This is part 2, running after reboot.
         :: Continue with the rest of your operations
 
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Delete_cached_os.ps1"
+
 start /wait msiexec /i %~dp0jcagent-msi-signed.msi /quiet JCINSTALLERARGUMENTS="-k jcc_eyJwdWJsaWNLaWNrc3RhcnRVcmwiOiJodHRwczovL2tpY2tzdGFydC5qdW1wY2xvdWQuY29tIiwicHJpdmF0ZUtpY2tzdGFydFVybCI6Imh0dHBzOi8vcHJpdmF0ZS1raWNrc3RhcnQuanVtcGNsb3VkLmNvbSIsImNvbm5lY3RLZXkiOiIzYzZmZTU3MDA3ZWVmNzNmOTg2NmM4MTcxNTU0Y2E2MWRkYzViNmM0In0g /VERYSILENT /SUPPRESSMSGBOXES"
 del C:\osdcloud\Scripts\Shutdown\create_unattended.ps1
 
@@ -10,10 +12,7 @@ rem timeout /t 60
 
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/install.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\install.ps1; #.\install.ps1"
 
-start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Delete_cached_os.ps1"
-
 cmd /c Dism.exe /online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
-
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Enable_virtual_setting in bios.ps1"
 

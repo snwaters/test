@@ -40,5 +40,9 @@ start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud
 
 START /WAIT "SentinalOne" "C:\osdcloud\Scripts\SetupComplete\SentinalOne\install.bat"
 
+ echo Continuing to part 3 after reboot...
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "MyScriptPart3" /t REG_SZ /d "C:\osdcloud\Scripts\SetupComplete\ScriptPart3.bat" /f
+    
+
 shutdown /r /f /t 0
 

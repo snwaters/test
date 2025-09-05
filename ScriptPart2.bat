@@ -36,11 +36,11 @@ winget install -e --id Lenovo.DockManager --silent --accept-package-agreements -
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\activation.ps1"
 
-start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Windows_update.ps1"
-
  echo Continuing to part 3 after reboot...
         reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "MyScriptPart3" /t REG_SZ /d "C:\osdcloud\Scripts\SetupComplete\ScriptPart3.bat" /f
-    
+
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Windows_update.ps1"
+
 rem CALL C:\osdcloud\Scripts\SetupComplete\SentinalOne\install.bat
 
 shutdown /r /f /t 0

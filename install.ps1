@@ -13,4 +13,5 @@ $Cred   = New-Object System.Management.Automation.PSCredential($User, $Pass)
 $TargetOU = "OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com"
 
 # Join the domain with the OUPath parameter
-Add-Computer -DomainName $Domain -Credential $Cred -OUPath $TargetOU -Restart
+Add-Computer -DomainName $Domain -Credential $Cred -OUPath $TargetOU #-Restart
+

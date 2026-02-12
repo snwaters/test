@@ -17,7 +17,7 @@ rem start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdc
 md C:\Users\Default\AppData\Roaming\Microsoft\Network
 md C:\Users\Default\AppData\Roaming\Microsoft\Network\Connections
 md c:\Users\Default\AppData\Roaming\Microsoft\Network\Connections\Pbk
-start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/rasphone.pbk -OutFile C:\Users\Default\AppData\Roaming\Microsoft\Network\Connections\rasphone.pbk 
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/rasphone.pbk -OutFile C:\Users\Default\AppData\Roaming\Microsoft\Network\Connections\Pbk\rasphone.pbk 
 
 rem start /wait powershell.exe -Command "Add-LocalGroupMember -Group "Administrators" -Member "Turner-nt\Desktop_admins"
 

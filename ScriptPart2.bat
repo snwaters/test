@@ -6,6 +6,7 @@
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Delete_cached_os.ps1"
 
 powercfg /x -standby-timeout-ac 0
+powercfg -change -monitor-timeout-ac 0
 
 
 

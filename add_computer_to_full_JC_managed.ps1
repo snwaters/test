@@ -4,7 +4,7 @@ Install-Module -Name JumpCloud -Force
 
 # 1. Connect to JumpCloud API
 # Replace '<YOUR_API_KEY>' with your actual JumpCloud Admin API Key
-$JCAPIKEY = 'jca_8LVjaQ6Wem5Zk7ody6zn41zsfxT6rZSjF8nA'
+$JCAPIKEY = 'jca_2EY4n4fAH9ThepSuW7YzGewQRQZmJUa96qkT'
 Connect-JCOnline $JCAPIKEY
 
 $deviceName = $env:COMPUTERNAME

@@ -12,6 +12,8 @@ start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubus
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
 
 @echo off
+echo .
+echo .
 choice /M "Do you want to join to the domain?"
 if errorlevel 2 goto :NO
 if errorlevel 1 goto :YES

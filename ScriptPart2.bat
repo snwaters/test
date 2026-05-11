@@ -4,6 +4,7 @@
         :: Continue with the rest of your operations
 
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Delete_cached_os.ps1"
+del C:\osdcloud\Scripts\Shutdown\create_unattended.ps1
 
 powercfg /x -standby-timeout-ac 0
 powercfg -change -monitor-timeout-ac 0

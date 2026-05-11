@@ -23,6 +23,7 @@ echo You pressed Yes!
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/install.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\install.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\install.ps1"
 timeout /t 30
+del /f /q "C:\osdcloud\Scripts\SetupComplete\install.ps1"
 shutdown /r /f /t 0
 exit
 

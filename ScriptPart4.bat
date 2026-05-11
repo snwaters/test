@@ -11,6 +11,9 @@ timeout /t 190
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/add_computer_to_full_JC_managed.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
 
+timeout /60
+del /f /q "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
+
 @echo off
 echo .
 echo .

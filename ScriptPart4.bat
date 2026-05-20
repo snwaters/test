@@ -13,6 +13,7 @@ start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud
 
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/download_s1.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\download_s1.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Download_S1.ps1"
+start /wait c:\windows\temp\SentinelOneInstaller_windows_64bit_v25_2_6_442.exe -q -t eyJ1cmwiOiAiaHR0cHM6Ly91c2VhMS0wMTguc2VudGluZWxvbmUubmV0IiwgInNpdGVfa2V5IjogIjY3ODVmZjg0MGEwZDMzODYifQ==
 
 timeout /60
 del /f /q "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"

@@ -33,6 +33,8 @@ REG ADD "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\DeviceGuard" /V Req
 
 REG ADD "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\LSA" /V LsaCfgFlags /T REG_DWORD /D 1 /F
 
+REG ADD "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System" /V AllowDomainPINLogon /T REG_DWORD /D 1 /F
+
 START /WAIT "BGinfo" "C:\osdcloud\Scripts\SetupComplete\BGInfo_11_2021\install.bat"
 
 winget install -e --id Google.Chrome --silent --accept-package-agreements --accept-source-agreements --source winget --scope machine

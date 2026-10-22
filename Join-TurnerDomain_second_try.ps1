@@ -1,164 +1,161 @@
 <#
+================================================================================
 .SYNOPSIS
-    Automated Active Directory Domain Join & Group Assignment for Turner Industries.
+    Automated Active Directory Domain Join with Pre-Join Computer Account Cleanup
+    and Post-Join Security Group Provisioning.
+
 .DESCRIPTION
-    Joins target machine(s) to domain "turner-industries.com" in OU "OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com"
-    and automatically assigns computer object membership to:
-    - CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com
-.NOTES
-    Domain: turner-industries.com
-    Target OU: OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com
-    Generated: 2026-10-19
-    Log Path: C:\Windows\debug\NetSetup.LOG
+    1. Discovers and pins to a healthy Domain Controller via DNS with retries.
+    2. Searches Active Directory for any pre-existing/stale computer account
+       matching the current hostname and deletes it (.NET ADSI) to eliminate
+       "Account already exists", duplicate SPN, or "Access denied" join conflicts.
+    3. Joins the domain into the target OU targeting the pinned DC.
+    4. Adds the newly joined computer to designated security groups on the same DC.
+================================================================================
 #>
 
 [CmdletBinding()]
 param()
 
-# Strict error mode
 $ErrorActionPreference = "Stop"
 
-# -------------------------------------------------------------------------
-# 1. Verify Local Administrator Elevation
-# -------------------------------------------------------------------------
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Error "This script must be executed in an elevated PowerShell session (Run as Administrator)." -ErrorAction Stop
+# --- CONFIGURATION ---
+$Domain   = "turner-industries.com"
+$User     = "turner-nt\srv-sccmjointoad"
+$Pass   = "cbXHmpRSCT7zd8f7CEKP" | ConvertTo-SecureString -AsPlainText -Force
+$Cred   = New-Object System.Management.Automation.PSCredential($User, $Pass)
+
+$TargetOU = "OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com"
+$TargetGroups = @(
+    "CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com"
+)
+
+$ComputerName = $env:COMPUTERNAME
+
+# --- STEP 1: ROBUST DC DISCOVERY (With Retries) ---
+Write-Host "Locating Domain Controller for $Domain..."
+$TargetDCHostname = $null
+$Attempt = 0
+$MaxAttempts = 15
+
+while ($null -eq $TargetDCHostname -and $Attempt -lt $MaxAttempts) {
+    $Attempt++
+    try {
+        # 1. Query DNS for the Domain's IP addresses (DCs)
+        $DomainDNS = [System.Net.Dns]::GetHostEntry($Domain)
+        
+        # 2. Select first available IP
+        $BestDCIP  = $DomainDNS.AddressList[0].IPAddressToString
+        
+        # 3. Resolve that IP to real Hostname (Required for Kerberos SPN / LDAP binding)
+        $DCHostEntry = [System.Net.Dns]::GetHostEntry($BestDCIP)
+        $TargetDCHostname = $DCHostEntry.HostName
+
+        Write-Host "Success! Pinned to Domain Controller: $TargetDCHostname ($BestDCIP)"
+    }
+    catch {
+        Write-Warning "Attempt $($Attempt)/$($MaxAttempts): DNS not ready yet. Waiting 3s..."
+        Start-Sleep -Seconds 3
+    }
 }
-Write-Host "[OK] Elevated Administrator token verified." -ForegroundColor Green
 
-# -------------------------------------------------------------------------
-# 2. Start Transcript Logging
-# -------------------------------------------------------------------------
-$LogDir = "C:\ProgramData\TurnerIndustries\Logs"
-if (-not (Test-Path -Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-$LogFile = Join-Path $LogDir ("DomainJoin_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
-Start-Transcript -Path $LogFile -Append
-Write-Host "[LOG] Session transcript active at $LogFile" -ForegroundColor Cyan
-
-# -------------------------------------------------------------------------
-# 3. Pre-Flight Connectivity & DNS Verification
-# -------------------------------------------------------------------------
-$Domain = "turner-industries.com"
-Write-Host "[CHECK] Resolving Active Directory domain DNS..." -NoNewline
-try {
-    $dnsResult = Resolve-DnsName -Name $Domain -Type A -ErrorAction Stop
-    Write-Host " [PASSED]" -ForegroundColor Green
-    Write-Host "        Domain Controller IPs: $($dnsResult.IPAddress -join ', ')" -ForegroundColor Gray
-} catch {
-    Write-Host " [FAILED]" -ForegroundColor Red
-    Write-Error "Unable to resolve $Domain. Check IPv4 DNS settings on your network adapter." -ErrorAction Stop
+# --- SAFETY CHECK ---
+if ([string]::IsNullOrEmpty($TargetDCHostname)) {
+    Write-Error "CRITICAL FAILURE: Could not resolve a Domain Controller after $MaxAttempts attempts."
+    Write-Error "Verify network link, DHCP lease, and DNS server configuration."
+    exit 1
 }
 
-Write-Host "[CHECK] Testing LDAP service connectivity (Port 389)..." -NoNewline
+# --- STEP 2: ACTIVE DIRECTORY PRE-JOIN CLEANUP (Pure .NET ADSI - Zero RSAT Dependency) ---
+# Deletes any existing computer account matching this hostname across the domain
+# to prevent "Account Already Exists", duplicate SPN, or "Access Denied" join conflicts.
+Write-Host "Searching Active Directory for existing computer account '$ComputerName' on $TargetDCHostname..."
+
+$PlainUser = $Cred.UserName
+$PlainPass = $Cred.GetNetworkCredential().Password
+
 try {
-    $tcpTest = Test-NetConnection -ComputerName $Domain -Port 389 -WarningAction SilentlyContinue
-    if ($tcpTest.TcpTestSucceeded) {
-        Write-Host " [PASSED]" -ForegroundColor Green
+    # 1. Determine Search Base DN (Search entire domain root to catch stale objects in any OU)
+    $DomainDN = (($Domain.Split('.') | ForEach-Object { "DC=$_" }) -join ',')
+    $SearchLdapPath = "LDAP://$TargetDCHostname/$DomainDN"
+    
+    # 2. Bind to Directory with explicit credentials targeted to pinned DC
+    $SearchRoot = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, "Secure")
+    
+    # 3. Create DirectorySearcher to locate the computer by sAMAccountName ($ComputerName$)
+    $Searcher = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
+    $Searcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $ComputerName + '$))'
+    $Searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
+    $Searcher.PageSize = 10
+    
+    $ExistingComputerResult = $Searcher.FindOne()
+    
+    if ($null -ne $ExistingComputerResult) {
+        $ExistingDN = $ExistingComputerResult.Properties["distinguishedname"][0]
+        Write-Warning "CONFLICT DETECTED: Found existing computer object in AD: $ExistingDN"
+        Write-Host "Deleting stale computer object from $TargetDCHostname before joining to ensure a clean state..."
+        
+        # 4. Bind directly to the computer object to invoke deletion
+        $ComputerEntry = $ExistingComputerResult.GetDirectoryEntry()
+        $ComputerEntry.Username = $PlainUser
+        $ComputerEntry.Password = $PlainPass
+        $ComputerEntry.AuthenticationType = [System.DirectoryServices.AuthenticationTypes]::Secure
+        
+        # DeleteTree() deletes the computer account and all nested leaf objects (e.g., BitLocker keys, TPM records)
+        $ComputerEntry.DeleteTree()
+        
+        Write-Host "Success: Stale computer account deleted from Active Directory ($TargetDCHostname)."
+        
+        # 5. Brief pause to allow local DC database to commit tombstone before Add-Computer executes
+        Write-Host "Waiting 3s for directory commit to settle..."
+        Start-Sleep -Seconds 3
     } else {
-        Write-Host " [FAILED]" -ForegroundColor Yellow
-        Write-Warning "TCP 389 unreachable. Check VPN, firewall or routing to Turner domain controllers."
+        Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed. Proceeding to join."
     }
-} catch {
-    Write-Warning "Unable to run Test-NetConnection; continuing..."
+}
+catch {
+    Write-Warning "Notice during AD computer cleanup: $_"
+    if ($_.Exception.InnerException) { Write-Warning $_.Exception.InnerException.Message }
+    Write-Host "Continuing with domain join attempt..."
 }
 
-# -------------------------------------------------------------------------
-# 4. Active Directory Credential Acquisition
-# -------------------------------------------------------------------------
-Write-Host "Enter your Turner Industries domain credentials (e.g. turner-industries\username):" -ForegroundColor Cyan
-$Credential = Get-Credential -UserName "turner-industries\" -Message "Enter credentials authorized to join OU and assign groups"
-
-# -------------------------------------------------------------------------
-# 5. Configuration Parameters
-# -------------------------------------------------------------------------
-$TargetDomain = "turner-industries.com"
-$TargetOU     = "OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com"
-
-# -------------------------------------------------------------------------
-# 6. Join Local Computer to Turner Industries Domain
-# -------------------------------------------------------------------------
+# --- STEP 3: JOIN DOMAIN (Targeting the Pinned DC) ---
+Write-Host "Joining Domain '$Domain' into '$TargetOU' using $TargetDCHostname..."
 try {
-    $currentComp = Get-CimInstance -ClassName Win32_ComputerSystem
-    if ($currentComp.PartOfDomain) {
-        Write-Host "[INFO] Computer is already joined to domain: $($currentComp.Domain)" -ForegroundColor Yellow
-    }
-
-    Write-Host "[JOIN] Initiating domain join to '$TargetDomain' into OU:" -ForegroundColor Cyan
-    Write-Host "       $TargetOU" -ForegroundColor Gray
-
-    # Execute Add-Computer cmdlet
-    Add-Computer -DomainName $TargetDomain `
-                 -OUPath $TargetOU `
-                 -Credential $Credential `
-                 -Force -ErrorAction Stop
-
-    Write-Host "[SUCCESS] Successfully joined to $TargetDomain in target OU!" -ForegroundColor Green
-
-    # -------------------------------------------------------------------------
-    # 7. Add Computer Object to Active Directory Security Group(s)
-    # -------------------------------------------------------------------------
-    $TargetMachineName = $env:COMPUTERNAME
-    $ComputerDN = "CN=$TargetMachineName,$TargetOU"
-    $ComputerSAM = "$($TargetMachineName)$"
-
-    $GroupsToAdd = @(
-        "CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com"
-    )
-
-    Write-Host "[GROUP] Assigning computer to security groups..." -ForegroundColor Cyan
-    foreach ($grpDN in $GroupsToAdd) {
-        Write-Host "        -> Target Group: $grpDN" -ForegroundColor Gray
-        try {
-            # Auto method: Uses ActiveDirectory module if installed, or native ADSI if not
-            if (Get-Module -ListAvailable -Name ActiveDirectory) {
-                Import-Module ActiveDirectory -ErrorAction SilentlyContinue
-                Add-ADGroupMember -Identity $grpDN -Members $ComputerSAM -Credential $Credential -ErrorAction Stop
-                Write-Host "           [OK] Added via ActiveDirectory module" -ForegroundColor Green
-            } else {
-                $domainUser = $Credential.UserName
-                $plainPass  = $Credential.GetNetworkCredential().Password
-                $groupEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$grpDN", $domainUser, $plainPass)
-                $groupEntry.Properties["member"].Add($ComputerDN) | Out-Null
-                $groupEntry.CommitChanges()
-                Write-Host "           [OK] Added via native ADSI LDAP provider" -ForegroundColor Green
-            }
-        } catch {
-            if ($_.Exception.Message -match "already exists|member already") {
-                Write-Host "           [INFO] Computer is already a member of this group." -ForegroundColor Yellow
-            } else {
-                Write-Host "           [WARN] Group assignment error: $($_.Exception.Message)" -ForegroundColor Yellow
-            }
-        }
-    }
-
-    Write-Host "[REBOOT] System will reboot in 15 seconds to complete registration..." -ForegroundColor Yellow
-    Restart-Computer -Force -Timeout 15
-} catch {
-    Write-Host "[ERROR] Operation failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "[DEBUG] Refer to detailed NetJoin log at C:\Windows\debug\NetSetup.LOG" -ForegroundColor Yellow
-    throw $_
+    Add-Computer -DomainName $Domain -Credential $Cred -OUPath $TargetOU -Server $TargetDCHostname -ErrorAction Stop
+    Write-Host "Success: Computer '$ComputerName' successfully joined to domain '$Domain'."
+}
+catch {
+    Write-Error "Join failed. Error: $_"
+    exit 1
 }
 
-# -------------------------------------------------------------------------
-# 8. Post-Join Validation
-# -------------------------------------------------------------------------
-Write-Host "[VERIFY] Checking secure channel trust relationship..." -ForegroundColor Cyan
-try {
-    $channelStatus = Test-ComputerSecureChannel -Verbose
-    if ($channelStatus) {
-        Write-Host "[OK] Secure channel with Turner Industries domain is healthy." -ForegroundColor Green
-    } else {
-        Write-Host "[WARN] Secure channel test returned false. Reboot will establish trust." -ForegroundColor Yellow
+# --- STEP 4: ADD TO AD SECURITY GROUPS (Targeting SAME DC via ADSI) ---
+Write-Host "Assigning Computer to AD Groups on $TargetDCHostname..."
+
+$ComputerDN = "CN=$ComputerName,$TargetOU"
+$PlainUser  = $Cred.UserName
+$PlainPass  = $Cred.GetNetworkCredential().Password
+
+foreach ($GroupDN in $TargetGroups) {
+    if ([string]::IsNullOrWhiteSpace($GroupDN)) { continue }
+    try {
+        Write-Host "Adding to group: $GroupDN"
+        $LdapPath    = "LDAP://$TargetDCHostname/$GroupDN"
+        $GroupObject = New-Object System.DirectoryServices.DirectoryEntry($LdapPath, $PlainUser, $PlainPass, "Secure")
+
+        # Invoke LDAP 'Add' method with the computer's distinguished name
+        $GroupObject.Invoke("Add", "LDAP://$ComputerDN")
+        $GroupObject.CommitChanges()
+
+        Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname."
     }
-} catch {
-    Write-Host "[INFO] Secure channel will establish upon system reboot." -ForegroundColor Gray
+    catch {
+        Write-Error "Failed to add to group '$GroupDN'. Error: $_"
+        if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
+    }
 }
 
-# -------------------------------------------------------------------------
-# ROLLBACK / DISJOIN PROCEDURE (IF NEEDED)
-# -------------------------------------------------------------------------
-# To remove this computer from the domain and return to WORKGROUP:
-# Remove-Computer -UnjoinDomainCredential (Get-Credential) -WorkgroupName "WORKGROUP" -Restart -Force
-
-Stop-Transcript
+Write-Host "================================================================="
+Write-Host "Domain Join and Active Directory Provisioning Completed Successfully."
+Write-Host "================================================================="

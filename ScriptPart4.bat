@@ -1,4 +1,6 @@
-powercfg /change standby-timeout-ac 0; powercfg /change standby-timeout-dc 0; powercfg /change monitor-timeout-ac 0; powercfg /change monitor-timeout-dc 0
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/disable_sleep.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\disable_sleep.ps1
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\disable_sleep.ps1"
+
 
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri "https://download.dnsfilter.com/User_Agent/Windows/DNSFilter_Agent_Setup.msi" -OutFile "C:\windows\temp\DNSFilter_Agent_Setup.msi"
 start /wait msiexec /qn /i "C:\windows\temp\DNSFilter_Agent_Setup.msi" NKEY="423ffc54341e60e1f87fa94d"

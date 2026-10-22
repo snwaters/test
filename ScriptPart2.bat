@@ -9,6 +9,8 @@ del C:\osdcloud\Scripts\Shutdown\create_unattended.ps1
 powercfg /x -standby-timeout-ac 0
 powercfg -change -monitor-timeout-ac 0
 
+powercfg /change standby-timeout-ac 0; powercfg /change standby-timeout-dc 0; powercfg /change monitor-timeout-ac 0; powercfg /change monitor-timeout-dc 0
+
 start /wait powershell.exe -Command "Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074} -MaxEvents 10 | Select-Object TimeCreated, Message | Format-Table -Wrap >> c:\osdcloud\reboots.txt"
 
 rem timeout /t 60

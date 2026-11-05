@@ -201,22 +201,72 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
 }
 
 # ==============================================================================
-# --- STEP 2: ACTIVE LDAP PROTOCOL VALIDATION & PRE-JOIN ACCOUNT CLEANUP ---
+# --- STEP 1.5 - BOOTSTRAP ENTERPRISE ROOT CA (Enables LDAPS on Workgroup Machines) ---
+# ==============================================================================
+# Fresh workgroup computers do not trust internal Active Directory Certificate Services (AD CS)
+# certificates until joined to the domain. This causes Windows SChannel to abort the TLS handshake
+# on port 636 with "The server is not operational" (SEC_E_UNTRUSTED_ROOT 0x80090325).
+# Active Directory stores its Enterprise Root and Intermediate CAs in the Configuration partition.
+# We read the CA certificate via Standard LDAP (Port 389) using the provided credentials
+# and import it into Cert:LocalMachineRoot, allowing LDAPS (636) to establish a trusted TLS session.
+Write-Host "Checking Active Directory Enterprise PKI trust for LDAPS TLS encryption..." -ForegroundColor Cyan
+try {
+    $ConfigDN = "CN=Configuration,$DomainDN"
+    $PkiLdapPath = "LDAP://$TargetDCHostname:389/CN=Certification Authorities,CN=Public Key Services,CN=Services,$ConfigDN"
+    $PkiEntry = New-Object System.DirectoryServices.DirectoryEntry($PkiLdapPath, $PlainUser, $PlainPass, [System.DirectoryServices.AuthenticationTypes]::Secure)
+    $PkiSearcher = New-Object System.DirectoryServices.DirectorySearcher($PkiEntry)
+    $PkiSearcher.Filter = "(objectClass=certificationAuthority)"
+    $PkiSearcher.PropertiesToLoad.Add("cACertificate") | Out-Null
+    $PkiSearcher.PropertiesToLoad.Add("cn") | Out-Null
+    $PkiSearcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
+    $CaObjects = $PkiSearcher.FindAll()
+
+    if ($null -ne $CaObjects -and $CaObjects.Count -gt 0) {
+        $RootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::Root, [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+        $RootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+
+        foreach ($CaObj in $CaObjects) {
+            $CaName = $CaObj.Properties["cn"][0]
+            if ($CaObj.Properties["cacertificate"].Count -gt 0) {
+                $RawBytes = $CaObj.Properties["cacertificate"][0]
+                $CaCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(,$RawBytes)
+                
+                # Verify if already in store
+                $Exists = $RootStore.Certificates | Where-Object { $_.Thumbprint -eq $CaCert.Thumbprint }
+                if (-not $Exists) {
+                    $RootStore.Add($CaCert)
+                    Write-Host "Success - Imported Enterprise Root CA '$CaName' ($($CaCert.Thumbprint)) into Trusted Root Store." -ForegroundColor Green
+                } else {
+                    Write-Host "Enterprise Root CA '$CaName' is already trusted in Local Machine store." -ForegroundColor Gray
+                }
+            }
+        }
+        $RootStore.Close()
+    }
+}
+catch {
+    Write-Warning "Notice during Root CA bootstrap - $($_.Exception.Message)"
+}
+
+
+# ==============================================================================
+# --- STEP 2 - ACTIVE LDAP PROTOCOL VALIDATION & PRE-JOIN ACCOUNT CLEANUP ---
 # ==============================================================================
 $ActiveLdapPort = 389
 $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
 $ActiveProtocol = "Standard LDAP (Port 389)"
 
-# --- CRITICAL FIX 2: REAL ACTIVE QUERY VALIDATION ---
-# Executes an actual DirectorySearcher query to test TLS before any cleanups
+# Real active query validation to test TLS before any cleanup
 if ($UseSecureLdap) {
     Write-Host "Validating Secure LDAP (LDAPS port $PreferredLdapPort) on $TargetDCHostname..." -ForegroundColor Cyan
+    $LdapsVerified = $false
+
+    # Attempt 1 - With ServerBind and SecureSocketsLayer
     try {
-        $LdapsTestPath = "LDAP://$($TargetDCHostname):$PreferredLdapPort/$DomainDN"
-        $LdapsAuthType = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::Secure
+        $LdapsTestPath = "LDAP://$TargetDCHostname:$PreferredLdapPort/$DomainDN"
+        $LdapsAuthType = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::ServerBind
         $TestEntry     = New-Object System.DirectoryServices.DirectoryEntry($LdapsTestPath, $PlainUser, $PlainPass, $LdapsAuthType)
         
-        # Dispatch live query across the TLS socket
         $TestSearcher             = New-Object System.DirectoryServices.DirectorySearcher($TestEntry)
         $TestSearcher.Filter      = "(objectClass=*)"
         $TestSearcher.SearchScope = [System.DirectoryServices.SearchScope]::Base
@@ -227,11 +277,35 @@ if ($UseSecureLdap) {
         $ActiveAuthType = $LdapsAuthType
         $ActiveProtocol = "Secure LDAP (LDAPS Port $PreferredLdapPort / TLS Encrypted)"
         Write-Host "Success - Verified LDAPS connection and TLS handshake with $TargetDCHostname." -ForegroundColor Green
+        $LdapsVerified  = $true
     }
     catch {
-        Write-Warning "Secure LDAP (Port $PreferredLdapPort) test failed on $TargetDCHostname - $($_.Exception.Message)"
+        # Attempt 2 - With Secure and SecureSocketsLayer
+        try {
+            $LdapsAuthType2 = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::Secure
+            $TestEntry2     = New-Object System.DirectoryServices.DirectoryEntry($LdapsTestPath, $PlainUser, $PlainPass, $LdapsAuthType2)
+            $TestSearcher2  = New-Object System.DirectoryServices.DirectorySearcher($TestEntry2)
+            $TestSearcher2.Filter      = "(objectClass=*)"
+            $TestSearcher2.SearchScope = [System.DirectoryServices.SearchScope]::Base
+            $TestSearcher2.PageSize    = 1
+            $null = $TestSearcher2.FindOne()
+            
+            $ActiveLdapPort = $PreferredLdapPort
+            $ActiveAuthType = $LdapsAuthType2
+            $ActiveProtocol = "Secure LDAP (LDAPS Port $PreferredLdapPort / TLS Encrypted)"
+            Write-Host "Success - Verified LDAPS connection and TLS handshake with $TargetDCHostname (SecureSocketsLayer)." -ForegroundColor Green
+            $LdapsVerified  = $true
+        }
+        catch {
+            $LdapsVerified = $false
+        }
+    }
+
+    if (-not $LdapsVerified) {
+        Write-Warning "Secure LDAP (Port $PreferredLdapPort) TLS handshake could not validate the server certificate on this workgroup machine."
+        Write-Host "Workgroup TLS Note - Fresh machines in WORKGROUP do not have internal AD CS PKI trust until domain joined." -ForegroundColor Gray
         if ($AllowLdapFallback) {
-            Write-Warning "AUTOMATIC FALLBACK - Switching to Standard LDAP (Port 389) with Kerberos/NTLM authentication..."
+            Write-Host "AUTOMATIC FALLBACK - Switching to Standard LDAP (Port 389) with Kerberos/NTLM authentication..." -ForegroundColor Yellow
             $ActiveLdapPort = 389
             $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
             $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"

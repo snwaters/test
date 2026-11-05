@@ -31,7 +31,7 @@
 param(
     # Optional field to test a specific LDAPS server (hostname, FQDN, or host:port).
     # If left blank, the script proceeds as usual with dynamic DC discovery.
-    [string]$TestLdapsServer = "dfw1-dc1",
+    [string]$TestLdapsServer = "",
 
     [switch]$ForceRejoin = $false
 )
@@ -53,7 +53,7 @@ $TargetGroups = @(
 # Secure LDAP (LDAPS) & Fallback Preferences
 $UseSecureLdap      = $true # Preferred transport: LDAPS (TLS/SSL)
 $PreferredLdapPort  = 636     # Standard LDAPS: 636
-$AllowLdapFallback  = $false # Fall back to port 389 if LDAPS fails
+$AllowLdapFallback  = $true # Fall back to port 389 if LDAPS fails
 
 $ComputerName = $env:COMPUTERNAME
 
@@ -212,7 +212,7 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
 Write-Host "Checking Active Directory Enterprise PKI trust for LDAPS TLS encryption..." -ForegroundColor Cyan
 try {
     $ConfigDN = "CN=Configuration,$DomainDN"
-    $PkiLdapPath = "LDAP://$TargetDCHostname:389/CN=Certification Authorities,CN=Public Key Services,CN=Services,$ConfigDN"
+    $PkiLdapPath = "LDAP://$TargetDCHostname/CN=Certification Authorities,CN=Public Key Services,CN=Services,$ConfigDN"
     $PkiEntry = New-Object System.DirectoryServices.DirectoryEntry($PkiLdapPath, $PlainUser, $PlainPass, [System.DirectoryServices.AuthenticationTypes]::Secure)
     $PkiSearcher = New-Object System.DirectoryServices.DirectorySearcher($PkiEntry)
     $PkiSearcher.Filter = "(objectClass=certificationAuthority)"
@@ -317,35 +317,51 @@ if ($UseSecureLdap) {
     }
 }
 
-Write-Host "Searching Active Directory for '$ComputerName' using $ActiveProtocol..." -ForegroundColor Cyan
+$CleanComputerName = $ComputerName.Trim()
+Write-Host "Searching Active Directory for '$CleanComputerName' across $DomainDN using $ActiveProtocol..." -ForegroundColor Cyan
 
-# Search & Cleanup with in-line fallback
-$ExistingComputerResult = $null
+# Determine correct ADSI path (Never pass :389 to ADSI to allow native Kerberos/NTLM authentication)
+$SearchLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$DomainDN" } else { "LDAP://$TargetDCHostname/$DomainDN" }
+
+$FoundComputers = @()
 try {
-    $SearchLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$DomainDN"
-    $SearchRoot     = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
-    $Searcher       = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
-    $Searcher.Filter      = '(&(objectCategory=computer)(sAMAccountName=' + $ComputerName + '$))'
+    $SearchRoot           = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
+    $Searcher             = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
+    $Searcher.Filter      = '(&(objectClass=computer)(|(sAMAccountName=' + $CleanComputerName + '$)(cn=' + $CleanComputerName + ')(name=' + $CleanComputerName + ')))'
     $Searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
-    $Searcher.PageSize    = 10
-    $ExistingComputerResult = $Searcher.FindOne()
+    $Searcher.PageSize    = 100
+    $Searcher.ReferralChasing = [System.DirectoryServices.ReferralChasingOption]::None
+    $Searcher.PropertiesToLoad.AddRange(@("distinguishedName", "sAMAccountName", "cn", "name"))
+    
+    $SearchResults = $Searcher.FindAll()
+    if ($null -ne $SearchResults) {
+        $FoundComputers = @($SearchResults)
+    }
 }
 catch {
-    Write-Warning "Notice during AD computer cleanup with $ActiveProtocol - $($_.Exception.Message)"
-    # If search failed on port 636, immediately fall back to port 389
+    Write-Warning "Notice during AD computer search with $ActiveProtocol - $($_.Exception.Message)"
+    # If search failed on port 636, immediately fall back to Standard LDAP (No port in ADsPath)
     if ($ActiveLdapPort -ne 389 -and $AllowLdapFallback) {
-        Write-Warning "Falling back to Standard LDAP (Port 389) for computer search..."
+        Write-Warning "Falling back to Standard LDAP for computer search..."
         $ActiveLdapPort = 389
         $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
         $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"
         try {
-            $FallbackSearchPath = "LDAP://$($TargetDCHostname):389/$DomainDN"
+            # Note - Standard LDAP in ADSI must NEVER have :389 in the path
+            $FallbackSearchPath = "LDAP://$TargetDCHostname/$DomainDN"
             $FallbackSearchRoot = New-Object System.DirectoryServices.DirectoryEntry($FallbackSearchPath, $PlainUser, $PlainPass, $ActiveAuthType)
             $FallbackSearcher   = New-Object System.DirectoryServices.DirectorySearcher($FallbackSearchRoot)
-            $FallbackSearcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $ComputerName + '$))'
+            $FallbackSearcher.Filter = '(&(objectClass=computer)(|(sAMAccountName=' + $CleanComputerName + '$)(cn=' + $CleanComputerName + ')(name=' + $CleanComputerName + ')))'
             $FallbackSearcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
-            $ExistingComputerResult = $FallbackSearcher.FindOne()
-            Write-Host "Success - Recovered and executed search via Standard LDAP (Port 389)." -ForegroundColor Green
+            $FallbackSearcher.PageSize = 100
+            $FallbackSearcher.ReferralChasing = [System.DirectoryServices.ReferralChasingOption]::None
+            $FallbackSearcher.PropertiesToLoad.AddRange(@("distinguishedName", "sAMAccountName", "cn", "name"))
+            
+            $FallbackResults = $FallbackSearcher.FindAll()
+            if ($null -ne $FallbackResults) {
+                $FoundComputers = @($FallbackResults)
+            }
+            Write-Host "Success - Executed search via Standard LDAP." -ForegroundColor Green
         }
         catch {
             Write-Warning "Standard LDAP fallback search also reported - $($_.Exception.Message)"
@@ -353,28 +369,90 @@ catch {
     }
 }
 
-# Delete stale computer object if found
-if ($null -ne $ExistingComputerResult) {
+# Delete stale computer object(s) if found
+if ($FoundComputers.Count -gt 0) {
+    Write-Warning "CONFLICT DETECTED - Found $($FoundComputers.Count) existing computer object(s) in Active Directory matching '$CleanComputerName'."
+    
+    foreach ($Result in $FoundComputers) {
+        $ExistingDN = $Result.Properties["distinguishedname"][0]
+        Write-Host "Processing stale computer account - $ExistingDN" -ForegroundColor Yellow
+        
+        $Deleted = $false
+        try {
+            $ComputerEntry = $Result.GetDirectoryEntry()
+            $ComputerEntry.Username = $PlainUser
+            $ComputerEntry.Password = $PlainPass
+            $ComputerEntry.AuthenticationType = $ActiveAuthType
+
+            # 1. Unprotect from accidental deletion if enabled in Active Directory
+            try {
+                $SecDescriptor = $ComputerEntry.ObjectSecurity
+                $DenyRules = $SecDescriptor.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | 
+                    Where-Object { $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny }
+                
+                if ($DenyRules) {
+                    Write-Host "Removing accidental deletion protection from '$ExistingDN'..." -ForegroundColor Yellow
+                    foreach ($Rule in $DenyRules) {
+                        $SecDescriptor.RemoveAccessRule($Rule) | Out-Null
+                    }
+                    $ComputerEntry.ObjectSecurity = $SecDescriptor
+                    $ComputerEntry.CommitChanges()
+                    Write-Host "Accidental deletion protection removed." -ForegroundColor Green
+                }
+            }
+            catch {
+                # Non-fatal if account is not protected or lacks DACL permissions
+            }
+
+            # 2. Deletion Attempt A - Standard Active Directory Parent Container Removal
+            try {
+                $ParentDN = $ComputerEntry.Parent
+                $ParentEntry = New-Object System.DirectoryServices.DirectoryEntry($ParentDN, $PlainUser, $PlainPass, $ActiveAuthType)
+                $ParentEntry.Delete("computer", $ComputerEntry.Name)
+                $ParentEntry.CommitChanges()
+                Write-Host "Success - Deleted stale computer '$CleanComputerName' via Parent Container ($TargetDCHostname)." -ForegroundColor Green
+                $Deleted = $true
+            }
+            catch {
+                # Deletion Attempt B - DeleteTree (cleans up any child objects like BitLocker recovery keys)
+                try {
+                    $ComputerEntry.DeleteTree()
+                    Write-Host "Success - Deleted stale computer '$CleanComputerName' via DeleteTree ($TargetDCHostname)." -ForegroundColor Green
+                    $Deleted = $true
+                }
+                catch {
+                    Write-Warning "Could not delete stale computer object '$ExistingDN' - $($_.Exception.Message)"
+                }
+            }
+        }
+        catch {
+            Write-Warning "Error while processing stale computer account - $($_.Exception.Message)"
+        }
+    }
+
+    Write-Host "Waiting 3 seconds for Active Directory deletion to commit..."
+    Start-Sleep -Seconds 3
+
+    # Verification Query - Confirm stale account is completely removed before joining
     try {
-        $ExistingDN = $ExistingComputerResult.Properties["distinguishedname"][0]
-        Write-Warning "CONFLICT DETECTED - Found existing computer object in AD - $ExistingDN"
-        Write-Host "Deleting stale computer object from $TargetDCHostname via $ActiveProtocol before joining..." -ForegroundColor Yellow
-        
-        $ComputerEntry = $ExistingComputerResult.GetDirectoryEntry()
-        $ComputerEntry.Username = $PlainUser
-        $ComputerEntry.Password = $PlainPass
-        $ComputerEntry.AuthenticationType = $ActiveAuthType
-        $ComputerEntry.DeleteTree()
-        
-        Write-Host "Success - Stale computer account deleted from Active Directory ($TargetDCHostname)." -ForegroundColor Green
-        Write-Host "Waiting 3s for directory commit to settle..."
-        Start-Sleep -Seconds 3
+        $VerifyPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$DomainDN" } else { "LDAP://$TargetDCHostname/$DomainDN" }
+        $VerifyRoot = New-Object System.DirectoryServices.DirectoryEntry($VerifyPath, $PlainUser, $PlainPass, $ActiveAuthType)
+        $VerifySearcher = New-Object System.DirectoryServices.DirectorySearcher($VerifyRoot)
+        $VerifySearcher.Filter = '(&(objectClass=computer)(sAMAccountName=' + $CleanComputerName + '$))'
+        $VerifySearcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
+        $VerifyResult = $VerifySearcher.FindOne()
+        if ($null -eq $VerifyResult) {
+            Write-Host "Verified - Active Directory pre-join cleanup confirmed. Zero stale objects remain." -ForegroundColor Green
+        } else {
+            Write-Warning "Stale computer account still detected in AD after deletion attempt. Domain join may report a naming conflict."
+        }
     }
     catch {
-        Write-Warning "Could not delete stale computer object - $($_.Exception.Message)"
+        # Non-fatal, continue to domain join
     }
-} else {
-    Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed. Proceeding to join."
+}
+else {
+    Write-Host "No existing computer account found with name '$CleanComputerName' on $TargetDCHostname. Clean state confirmed. Proceeding to join." -ForegroundColor Green
 }
 
 # --- STEP 3: JOIN DOMAIN (Targeting the Pinned DC) ---
@@ -403,13 +481,13 @@ foreach ($GroupDN in $TargetGroups) {
 
     # 1. Primary Attempt using the active protocol
     try {
-        $GroupLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$GroupDN"
+        $GroupLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$GroupDN" } else { "LDAP://$TargetDCHostname/$GroupDN" }
         $GroupObject   = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
         
         # Test directory binding by checking Guid before invoking
         $null = $GroupObject.Guid
 
-        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$ComputerDN"
+        $ComputerLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$ComputerDN" } else { "LDAP://$TargetDCHostname/$ComputerDN" }
         $GroupObject.Invoke("Add", $ComputerLdapPath)
         $GroupObject.CommitChanges()
 
@@ -425,29 +503,29 @@ foreach ($GroupDN in $TargetGroups) {
             $Added = $true
         }
         else {
-            # 2. IMMEDIATE FALLBACK TO STANDARD LDAP (Port 389)
+            # 2. IMMEDIATE FALLBACK TO STANDARD LDAP (Port 389 without explicit port in ADsPath)
             if ($AllowLdapFallback) {
                 Write-Warning "Group addition failed with $ActiveProtocol - $ErrMessage"
-                Write-Warning "Attempting immediate fallback to Standard LDAP (Port 389) with Kerberos/NTLM..."
+                Write-Warning "Attempting immediate fallback to Standard LDAP with Kerberos/NTLM..."
                 
                 try {
                     $FallbackAuthType  = [System.DirectoryServices.AuthenticationTypes]::Secure
-                    $GroupFallbackPath = "LDAP://$($TargetDCHostname):389/$GroupDN"
+                    $GroupFallbackPath = "LDAP://$TargetDCHostname/$GroupDN"
                     $GroupFallbackObj  = New-Object System.DirectoryServices.DirectoryEntry($GroupFallbackPath, $PlainUser, $PlainPass, $FallbackAuthType)
                     
                     # Force bind
                     $null = $GroupFallbackObj.Guid
                     
-                    # Try with DC port 389 path, then fallback to relative DN
+                    # Try with DC path, then fallback to relative DN
                     try {
-                        $GroupFallbackObj.Invoke("Add", "LDAP://$($TargetDCHostname):389/$ComputerDN")
+                        $GroupFallbackObj.Invoke("Add", "LDAP://$TargetDCHostname/$ComputerDN")
                     }
                     catch {
                         $GroupFallbackObj.Invoke("Add", "LDAP://$ComputerDN")
                     }
                     $GroupFallbackObj.CommitChanges()
                     
-                    Write-Host "Success - Added '$ComputerName' to group '$GroupDN' via Standard LDAP (Port 389 Fallback)." -ForegroundColor Green
+                    Write-Host "Success - Added '$ComputerName' to group '$GroupDN' via Standard LDAP (Fallback Active)." -ForegroundColor Green
                     $Added = $true
                     
                     # Permanently switch active port to 389 so remaining groups succeed instantly

@@ -23,3 +23,32 @@ At C:\Users\ad-snwaters\Downloads\JointoDomain.ps1:245 char:9
     + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException
     + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException,JointoDomain.ps1
  
+
+
+
+
+
+
+
+Testing Secure LDAP (LDAPS : 636) connection on dfw1-dc1...
+Success: Connected via Secure LDAP (LDAPS Port 636 / TLS Encrypted).
+Searching Active Directory for 'C07515-11T' using Secure LDAP (LDAPS Port 636 / TLS Encrypted)...
+WARNING: Notice during AD computer cleanup: Exception calling "FindOne" with "0" argument(s): "The server is not operational.
+"
+WARNING: The server is not operational.
+
+Continuing with domain join attempt...
+Joining Domain 'turner-industries.com' into 'OU=Baton Rouge,OU=All_Computers,DC=turner-industries,DC=com' using dfw1-dc1...
+WARNING: The changes will take effect after you restart the computer C07515-11T.
+Success: Computer 'C07515-11T' successfully joined to domain 'turner-industries.com'.
+Assigning Computer to AD Groups on dfw1-dc1 via Secure LDAP (LDAPS Port 636 / TLS Encrypted)...
+Processing AD Security Group: CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com
+C:\Users\Administrator\Downloads\test.ps1 : Failed to add to group 'CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com'. Error: The 
+following exception occurred while retrieving member "Invoke": "The server is not operational.
+"
+At C:\Users\Administrator\Downloads\test.ps1:404 char:17
++ ...             Write-Error "Failed to add to group '$GroupDN'. Error: $E ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException
+    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException,test.ps1
+ 

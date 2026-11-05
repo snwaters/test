@@ -3,7 +3,7 @@
 .SYNOPSIS
     Automated Active Directory Domain Join with Pre-Flight Domain Membership Check,
     Secure LDAP (LDAPS) with Automatic Standard LDAP Fallback, Account Cleanup,
-    and Post-Join Group Provisioning.
+    and Fault-Tolerant Security Group Provisioning.
 
 .DESCRIPTION
     0. PRE-FLIGHT CHECK: Checks if the local machine is already joined to the
@@ -12,13 +12,16 @@
     1. Discovers and pins to a healthy Domain Controller via DNS with retries.
     2. PROTOCOL SELECTION & RESILIENT BINDING:
        Attempts Secure LDAP (LDAPS / Port 636 with SSL/TLS).
-       If LDAPS fails (e.g. untrusted CA cert or port 636 blocked), automatically falls back to standard LDAP (Port 389).
+       If LDAPS fails (untrusted CA cert or port 636 blocked), automatically falls back to standard LDAP (Port 389).
     3. Searches Active Directory for any pre-existing/stale computer account
        matching the current hostname and deletes it (.NET ADSI) to eliminate
        "Account already exists", duplicate SPN, or "Access denied" join conflicts.
     4. Joins the domain into the target OU targeting the pinned DC.
-    5. Adds the newly joined computer to designated security groups on the same
-       pinned DC using the active LDAP protocol.
+    5. AD SECURITY GROUPS WITH LDAPS -> LDAP FALLBACK:
+       Attempts to assign the newly joined computer to designated security groups
+       over Secure LDAP (LDAPS:636). If group modification fails under LDAPS,
+       it automatically falls back to standard LDAP (Port 389) so group membership
+       provisioning never fails.
 ================================================================================
 #>
 
@@ -155,8 +158,8 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
 # ==============================================================================
 # --- STEP 2: LDAP PROTOCOL NEGOTIATION & PRE-JOIN ACCOUNT CLEANUP ---
 # ==============================================================================
-# Attempts Secure LDAP (Port 636) first. If LDAPS fails (e.g. untrusted CA or port 636 blocked),
-# falls back to Standard LDAP (Port 389) so automation never breaks.
+# Attempts Secure LDAP (Port 636) first. If LDAPS fails, automatically falls back
+# to Standard LDAP (Port 389) so automation never breaks.
 $PlainUser = $Cred.UserName
 $PlainPass = $Cred.GetNetworkCredential().Password
 $DomainDN  = (($Domain.Split('.') | ForEach-Object { "DC=$_" }) -join ',')
@@ -253,28 +256,79 @@ catch {
     exit 1
 }
 
-# --- STEP 4: ADD TO AD SECURITY GROUPS (Targeting SAME DC via Active LDAP Protocol) ---
+# ==============================================================================
+# --- STEP 4: ADD TO AD SECURITY GROUPS (With LDAPS -> LDAP Auto-Fallback) ---
+# ==============================================================================
 Write-Host "Assigning Computer to AD Groups on $TargetDCHostname via $ActiveProtocol..." -ForegroundColor Cyan
 
 $ComputerDN = "CN=$ComputerName,$TargetOU"
 
 foreach ($GroupDN in $TargetGroups) {
     if ([string]::IsNullOrWhiteSpace($GroupDN)) { continue }
+    
+    Write-Host "Processing AD Security Group: $GroupDN"
+    $Added = $false
+
+    # 1. Primary Attempt using the active protocol (LDAPS:636 or LDAP:389)
     try {
-        Write-Host "Adding to group: $GroupDN"
-        $GroupLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$GroupDN"
-        $GroupObject   = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
+        $GroupLdapPath    = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$GroupDN"
+        $GroupObject      = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
+        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$ComputerDN"
 
         # Invoke LDAP 'Add' method targeting the pinned DC
-        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$ComputerDN"
         $GroupObject.Invoke("Add", $ComputerLdapPath)
         $GroupObject.CommitChanges()
 
         Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname ($ActiveProtocol)." -ForegroundColor Green
+        $Added = $true
     }
     catch {
-        Write-Error "Failed to add to group '$GroupDN'. Error: $_"
-        if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
+        $ErrMessage = $_.Exception.Message
+        
+        # Check if already a member (HRESULT 0x80071392 / 'The object already exists')
+        if ($ErrMessage -match "already exists|already a member" -or ($_.Exception.InnerException -and $_.Exception.InnerException.Message -match "already exists|already a member")) {
+            Write-Host "Notice: Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
+            $Added = $true
+        }
+        else {
+            # 2. IF LDAPS (Port 636) FAILED, FALL BACK TO STANDARD LDAP (Port 389)
+            if ($ActiveLdapPort -eq 636 -and $AllowLdapFallback) {
+                Write-Warning "LDAPS group addition failed for '$GroupDN' ($ErrMessage)."
+                Write-Warning "Attempting immediate fallback to Standard LDAP (Port 389) with Kerberos/NTLM..."
+                
+                try {
+                    $FallbackAuthType     = [System.DirectoryServices.AuthenticationTypes]::Secure
+                    $GroupFallbackPath    = "LDAP://$($TargetDCHostname):389/$GroupDN"
+                    $GroupFallbackObj     = New-Object System.DirectoryServices.DirectoryEntry($GroupFallbackPath, $PlainUser, $PlainPass, $FallbackAuthType)
+                    $ComputerFallbackPath = "LDAP://$($TargetDCHostname):389/$ComputerDN"
+                    
+                    $GroupFallbackObj.Invoke("Add", $ComputerFallbackPath)
+                    $GroupFallbackObj.CommitChanges()
+                    
+                    Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via Standard LDAP (Port 389 Fallback)." -ForegroundColor Green
+                    $Added = $true
+                    
+                    # Switch ActiveProtocol to port 389 for any remaining groups to prevent duplicate timeouts
+                    $ActiveLdapPort = 389
+                    $ActiveAuthType = $FallbackAuthType
+                    $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"
+                }
+                catch {
+                    $FallbackErrMsg = $_.Exception.Message
+                    if ($FallbackErrMsg -match "already exists|already a member") {
+                        Write-Host "Notice: Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
+                        $Added = $true
+                    } else {
+                        Write-Error "Failed to add to group '$GroupDN' even after LDAP fallback. Error: $FallbackErrMsg"
+                        if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
+                    }
+                }
+            }
+            else {
+                Write-Error "Failed to add to group '$GroupDN'. Error: $ErrMessage"
+                if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
+            }
+        }
     }
 }
 

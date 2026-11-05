@@ -2,30 +2,28 @@
 ================================================================================
 .SYNOPSIS
     Automated Active Directory Domain Join with Pre-Flight Domain Membership Check,
-    Optional LDAPS Server Test Field, Secure LDAP (LDAPS) with Standard LDAP Fallback,
-    Account Cleanup, and Fault-Tolerant Security Group Provisioning.
+    FQDN Normalization, Active LDAPS Query Validation, Automatic Standard LDAP Fallback,
+    Pre-Join Account Cleanup, and Resilient Security Group Provisioning.
 
 .DESCRIPTION
     0. PRE-FLIGHT CHECK: Checks if the local machine is already joined to the
        target domain (via Win32_ComputerSystem CIM). Prevents redundant executions
        and protects against self-destructive AD account deletion.
-    1. DC DISCOVERY / TARGETED LDAPS TEST SERVER:
-       - If $TestLdapsServer is specified (not blank), the script tests that
-         specific LDAPS server (TCP port & TLS bind).
-       - If $TestLdapsServer is blank, it proceeds as usual using robust DNS
-         discovery with retries to pin a healthy Domain Controller.
+    1. DC DISCOVERY & FQDN NORMALIZATION:
+       - Discovers or tests specific DC, ensuring short NetBIOS names (e.g. dfw1-dc1)
+         are expanded to FQDN (dfw1-dc1.turner-industries.com) to prevent SSL certificate
+         SAN mismatch errors ("The server is not operational").
     2. PROTOCOL SELECTION & RESILIENT BINDING:
-       Attempts Secure LDAP (LDAPS / Port 636 with SSL/TLS).
-       If LDAPS fails (untrusted CA cert or port 636 blocked), automatically falls back to standard LDAP (Port 389).
+       - Performs an ACTIVE query test (DirectorySearcher) to verify genuine TLS capability.
+       - If LDAPS fails (untrusted CA, missing cert, or port blocked), automatically
+         and immediately falls back to Standard LDAP (Port 389) for both Step 2 and Step 4.
     3. Searches Active Directory for any pre-existing/stale computer account
        matching the current hostname and deletes it (.NET ADSI) to eliminate
        "Account already exists", duplicate SPN, or "Access denied" join conflicts.
     4. Joins the domain into the target OU targeting the pinned DC.
-    5. AD SECURITY GROUPS WITH LDAPS -> LDAP FALLBACK:
-       Attempts to assign the newly joined computer to designated security groups
-       over Secure LDAP (LDAPS:636). If group modification fails under LDAPS,
-       it automatically falls back to standard LDAP (Port 389) so group membership
-       provisioning never fails. Also safely handles duplicate memberships.
+    5. AD SECURITY GROUPS WITH PER-GROUP LDAP FALLBACK:
+       - Adds computer to designated security groups with instant port 389 fallback
+         and duplicate membership handling.
 ================================================================================
 #>
 
@@ -83,7 +81,7 @@ if ($null -ne $CurrentSystem) {
 }
 
 if ($IsJoined) {
-    Write-Host "Current Status: Computer is joined to domain '$CurrentDomain'." -ForegroundColor Yellow
+    Write-Host "Current Status - Computer is joined to domain '$CurrentDomain'." -ForegroundColor Yellow
     
     # Check if joined to the EXACT TARGET domain
     if ($CurrentDomain -ieq $Domain) {
@@ -107,7 +105,7 @@ if ($IsJoined) {
             Write-Warning "ForceRejoin switch specified. Proceeding with clean re-join process..."
         } else {
             Write-Host "=================================================================" -ForegroundColor Green
-            Write-Host "SUCCESS: Machine is already a member of '$Domain'. No action needed." -ForegroundColor Green
+            Write-Host "SUCCESS - Machine is already a member of '$Domain'. No action needed." -ForegroundColor Green
             Write-Host "Exiting cleanly (Exit Code 0). Safe from redundant join or AD deletion." -ForegroundColor Green
             Write-Host "=================================================================" -ForegroundColor Green
             exit 0
@@ -125,12 +123,12 @@ if ($IsJoined) {
 }
 else {
     $Workgroup = if ($CurrentSystem.Workgroup) { $CurrentSystem.Workgroup } else { "WORKGROUP" }
-    Write-Host "Confirmed: Computer is in workgroup '$Workgroup' (Not joined to any domain)." -ForegroundColor Green
+    Write-Host "Confirmed - Computer is in workgroup '$Workgroup' (Not joined to any domain)." -ForegroundColor Green
     Write-Host "Proceeding with automated domain join to '$Domain'..." -ForegroundColor Cyan
 }
 
 # ==============================================================================
-# --- STEP 1: DC DISCOVERY & OPTIONAL LDAPS SERVER TEST ---
+# --- STEP 1: DC DISCOVERY, FQDN NORMALIZATION & LDAPS SERVER TEST ---
 # ==============================================================================
 $TargetDCHostname = $null
 $DomainDN         = (($Domain.Split('.') | ForEach-Object { "DC=$_" }) -join ',')
@@ -140,58 +138,25 @@ $PlainPass        = $Cred.GetNetworkCredential().Password
 # Check if the user specified a custom LDAPS test server in $TestLdapsServer
 if (-not [string]::IsNullOrWhiteSpace($TestLdapsServer)) {
     Write-Host "-----------------------------------------------------------------" -ForegroundColor Cyan
-    Write-Host "Specific LDAPS test server configured: '$TestLdapsServer'" -ForegroundColor Cyan
-    Write-Host "Testing connectivity and LDAPS TLS bind to specified host..." -ForegroundColor Cyan
+    Write-Host "Specific LDAPS test server configured - '$TestLdapsServer'" -ForegroundColor Cyan
 
-    # Parse hostname and port if formatted as server:port
     $ServerHost = $TestLdapsServer.Split(':')[0].Trim()
     $ServerPort = if ($TestLdapsServer.Contains(':')) { [int]$TestLdapsServer.Split(':')[1] } else { $PreferredLdapPort }
 
-    # 1. TCP Port test
-    Write-Host "Pinging TCP Port $ServerPort on '$ServerHost'..." -ForegroundColor Gray
+    # Ensure FQDN to prevent SSL Subject Name mismatch
+    if ($ServerHost -notlike "*.*") {
+        $ServerHost = "$ServerHost.$Domain"
+    }
+
+    Write-Host "Testing TCP Port $ServerPort on '$ServerHost'..." -ForegroundColor Gray
     $TcpResult = Test-NetConnection -ComputerName $ServerHost -Port $ServerPort -WarningAction SilentlyContinue
 
     if ($TcpResult.TcpTestSucceeded) {
         Write-Host "TCP Port $ServerPort is OPEN on '$ServerHost'." -ForegroundColor Green
-        
-        # 2. Test LDAPS ADSI directory bind over SSL/TLS
-        try {
-            $TestPath = "LDAP://$($ServerHost):$ServerPort/$DomainDN"
-            $TestAuth = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::Secure
-            $TestObj  = New-Object System.DirectoryServices.DirectoryEntry($TestPath, $PlainUser, $PlainPass, $TestAuth)
-            
-            # Force active socket connection and TLS certificate handshake
-            $null = $TestObj.NativeObject
-            
-            Write-Host "SUCCESS: LDAPS TLS bind test PASSED on '$ServerHost:$ServerPort'!" -ForegroundColor Green
-            $TargetDCHostname = $ServerHost
-            Write-Host "Pinned to custom tested LDAPS server: $TargetDCHostname" -ForegroundColor Green
-        }
-        catch {
-            Write-Warning "LDAPS bind failed on '$ServerHost:$ServerPort': $($_.Exception.Message)"
-            if ($AllowLdapFallback) {
-                Write-Warning "Testing Standard LDAP (Port 389) on '$ServerHost'..."
-                try {
-                    $FallbackPath = "LDAP://$($ServerHost):389/$DomainDN"
-                    $FallbackAuth = [System.DirectoryServices.AuthenticationTypes]::Secure
-                    $FallbackObj  = New-Object System.DirectoryServices.DirectoryEntry($FallbackPath, $PlainUser, $PlainPass, $FallbackAuth)
-                    $null         = $FallbackObj.NativeObject
-                    
-                    Write-Host "SUCCESS: Standard LDAP (Port 389) PASSED on '$ServerHost'." -ForegroundColor Green
-                    $TargetDCHostname = $ServerHost
-                }
-                catch {
-                    Write-Warning "Standard LDAP on '$ServerHost' also failed ($($_.Exception.Message))."
-                    Write-Warning "Falling back to dynamic DNS discovery as usual..."
-                }
-            } else {
-                Write-Warning "Falling back to dynamic DNS discovery as usual..."
-            }
-        }
+        $TargetDCHostname = $ServerHost
     }
     else {
-        Write-Warning "TCP test to '$ServerHost' on port $ServerPort FAILED."
-        Write-Warning "Specified server unreachable. Falling back to dynamic DNS discovery as usual..."
+        Write-Warning "TCP test to '$ServerHost' on port $ServerPort FAILED. Falling back to dynamic DNS discovery as usual..."
     }
     Write-Host "-----------------------------------------------------------------" -ForegroundColor Cyan
 }
@@ -199,7 +164,7 @@ if (-not [string]::IsNullOrWhiteSpace($TestLdapsServer)) {
 # If $TestLdapsServer was blank (or failed reachability), proceed with dynamic DNS discovery as usual
 if ([string]::IsNullOrEmpty($TargetDCHostname)) {
     if ([string]::IsNullOrWhiteSpace($TestLdapsServer)) {
-        Write-Host "Notice: TestLdapsServer field is blank. Proceeding with dynamic DNS discovery as usual..." -ForegroundColor Gray
+        Write-Host "Notice - TestLdapsServer field is blank. Proceeding with dynamic DNS discovery as usual..." -ForegroundColor Gray
     }
     Write-Host "Locating Domain Controller for $Domain via DNS with retries..." -ForegroundColor Cyan
     $Attempt = 0
@@ -208,23 +173,24 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
     while ($null -eq $TargetDCHostname -and $Attempt -lt $MaxAttempts) {
         $Attempt++
         try {
-            # 1. Query DNS for the Domain's IP addresses (DCs)
-            $DomainDNS = [System.Net.Dns]::GetHostEntry($Domain)
-            
-            # 2. Select first available IP
-            $BestDCIP  = $DomainDNS.AddressList[0].IPAddressToString
-            
-            # 3. Resolve that IP to real Hostname (Required for TLS/SSL Certificate Subject Name and Kerberos SPN)
+            $DomainDNS   = [System.Net.Dns]::GetHostEntry($Domain)
+            $BestDCIP    = $DomainDNS.AddressList[0].IPAddressToString
             $DCHostEntry = [System.Net.Dns]::GetHostEntry($BestDCIP)
             $TargetDCHostname = $DCHostEntry.HostName
 
-            Write-Host "Success! Pinned to Domain Controller: $TargetDCHostname ($BestDCIP)"
+            Write-Host "Success! Located Domain Controller $TargetDCHostname ($BestDCIP)"
         }
         catch {
             Write-Warning "Attempt $($Attempt)/$($MaxAttempts): DNS not ready yet. Waiting 3s..."
             Start-Sleep -Seconds 3
         }
     }
+}
+
+# --- CRITICAL FIX 1: FQDN EXPANSION (Resolves dfw1-dc1 -> dfw1-dc1.turner-industries.com) ---
+if ($TargetDCHostname -notlike "*.*" -and -not [string]::IsNullOrEmpty($TargetDCHostname)) {
+    $TargetDCHostname = "$TargetDCHostname.$Domain"
+    Write-Host "Expanded DC Hostname to FQDN for LDAPS certificate validation - $TargetDCHostname" -ForegroundColor Cyan
 }
 
 # --- SAFETY CHECK ---
@@ -235,35 +201,35 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
 }
 
 # ==============================================================================
-# --- STEP 2: LDAP PROTOCOL NEGOTIATION & PRE-JOIN ACCOUNT CLEANUP ---
+# --- STEP 2: ACTIVE LDAP PROTOCOL VALIDATION & PRE-JOIN ACCOUNT CLEANUP ---
 # ==============================================================================
-# Attempts Secure LDAP (Port 636) first. If LDAPS fails, automatically falls back
-# to Standard LDAP (Port 389) so automation never breaks.
-
-# Determine Active LDAP Endpoint & AuthType
 $ActiveLdapPort = 389
 $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
 $ActiveProtocol = "Standard LDAP (Port 389)"
 
+# --- CRITICAL FIX 2: REAL ACTIVE QUERY VALIDATION ---
+# Executes an actual DirectorySearcher query to test TLS before any cleanups
 if ($UseSecureLdap) {
-    Write-Host "Testing Secure LDAP (LDAPS : $PreferredLdapPort) connection on $TargetDCHostname..." -ForegroundColor Cyan
+    Write-Host "Validating Secure LDAP (LDAPS port $PreferredLdapPort) on $TargetDCHostname..." -ForegroundColor Cyan
     try {
         $LdapsTestPath = "LDAP://$($TargetDCHostname):$PreferredLdapPort/$DomainDN"
         $LdapsAuthType = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::Secure
         $TestEntry     = New-Object System.DirectoryServices.DirectoryEntry($LdapsTestPath, $PlainUser, $PlainPass, $LdapsAuthType)
         
-        # Force active socket connection and TLS handshake verification
-        $null = $TestEntry.NativeObject
+        # Dispatch live query across the TLS socket
+        $TestSearcher             = New-Object System.DirectoryServices.DirectorySearcher($TestEntry)
+        $TestSearcher.Filter      = "(objectClass=*)"
+        $TestSearcher.SearchScope = [System.DirectoryServices.SearchScope]::Base
+        $TestSearcher.PageSize    = 1
+        $null = $TestSearcher.FindOne()
         
         $ActiveLdapPort = $PreferredLdapPort
         $ActiveAuthType = $LdapsAuthType
         $ActiveProtocol = "Secure LDAP (LDAPS Port $PreferredLdapPort / TLS Encrypted)"
-        Write-Host "Success: Connected via $ActiveProtocol." -ForegroundColor Green
+        Write-Host "Success - Verified LDAPS connection and TLS handshake with $TargetDCHostname." -ForegroundColor Green
     }
     catch {
-        Write-Warning "Secure LDAP (LDAPS : $PreferredLdapPort) connection failed to $TargetDCHostname."
-        Write-Warning "Reason: $($_.Exception.Message)"
-        
+        Write-Warning "Secure LDAP (Port $PreferredLdapPort) test failed on $TargetDCHostname: $($_.Exception.Message)"
         if ($AllowLdapFallback) {
             Write-Warning "AUTOMATIC FALLBACK: Switching to Standard LDAP (Port 389) with Kerberos/NTLM authentication..."
             $ActiveLdapPort = 389
@@ -279,53 +245,69 @@ if ($UseSecureLdap) {
 
 Write-Host "Searching Active Directory for '$ComputerName' using $ActiveProtocol..." -ForegroundColor Cyan
 
+# Search & Cleanup with in-line fallback
+$ExistingComputerResult = $null
 try {
-    # 1. Bind to Directory with explicit credentials targeted to pinned DC using active protocol
     $SearchLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$DomainDN"
     $SearchRoot     = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
-    
-    # 2. Locate computer by sAMAccountName ($ComputerName$)
-    $Searcher             = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
+    $Searcher       = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
     $Searcher.Filter      = '(&(objectCategory=computer)(sAMAccountName=' + $ComputerName + '$))'
     $Searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
     $Searcher.PageSize    = 10
-    
     $ExistingComputerResult = $Searcher.FindOne()
-    
-    if ($null -ne $ExistingComputerResult) {
+}
+catch {
+    Write-Warning "Notice during AD computer cleanup with $ActiveProtocol: $($_.Exception.Message)"
+    # If search failed on port 636, immediately fall back to port 389
+    if ($ActiveLdapPort -ne 389 -and $AllowLdapFallback) {
+        Write-Warning "Falling back to Standard LDAP (Port 389) for computer search..."
+        $ActiveLdapPort = 389
+        $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
+        $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"
+        try {
+            $FallbackSearchPath = "LDAP://$($TargetDCHostname):389/$DomainDN"
+            $FallbackSearchRoot = New-Object System.DirectoryServices.DirectoryEntry($FallbackSearchPath, $PlainUser, $PlainPass, $ActiveAuthType)
+            $FallbackSearcher   = New-Object System.DirectoryServices.DirectorySearcher($FallbackSearchRoot)
+            $FallbackSearcher.Filter = '(&(objectCategory=computer)(sAMAccountName=' + $ComputerName + '$))'
+            $FallbackSearcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
+            $ExistingComputerResult = $FallbackSearcher.FindOne()
+            Write-Host "Success - Recovered and executed search via Standard LDAP (Port 389)." -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Standard LDAP fallback search also reported: $($_.Exception.Message)"
+        }
+    }
+}
+
+# Delete stale computer object if found
+if ($null -ne $ExistingComputerResult) {
+    try {
         $ExistingDN = $ExistingComputerResult.Properties["distinguishedname"][0]
         Write-Warning "CONFLICT DETECTED: Found existing computer object in AD: $ExistingDN"
         Write-Host "Deleting stale computer object from $TargetDCHostname via $ActiveProtocol before joining..." -ForegroundColor Yellow
         
-        # 3. Bind directly to the computer object with active authentication to invoke deletion
         $ComputerEntry = $ExistingComputerResult.GetDirectoryEntry()
         $ComputerEntry.Username = $PlainUser
         $ComputerEntry.Password = $PlainPass
         $ComputerEntry.AuthenticationType = $ActiveAuthType
-        
-        # DeleteTree() deletes the computer account and all nested leaf objects (e.g. BitLocker keys, TPM records)
         $ComputerEntry.DeleteTree()
         
-        Write-Host "Success: Stale computer account deleted from Active Directory ($TargetDCHostname) via $ActiveProtocol." -ForegroundColor Green
-        
-        # Brief pause to allow local DC database to commit tombstone before Add-Computer executes
+        Write-Host "Success - Stale computer account deleted from Active Directory ($TargetDCHostname)." -ForegroundColor Green
         Write-Host "Waiting 3s for directory commit to settle..."
         Start-Sleep -Seconds 3
-    } else {
-        Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed via $ActiveProtocol. Proceeding to join."
     }
-}
-catch {
-    Write-Warning "Notice during AD computer cleanup: $_"
-    if ($_.Exception.InnerException) { Write-Warning $_.Exception.InnerException.Message }
-    Write-Host "Continuing with domain join attempt..."
+    catch {
+        Write-Warning "Could not delete stale computer object: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed. Proceeding to join."
 }
 
 # --- STEP 3: JOIN DOMAIN (Targeting the Pinned DC) ---
 Write-Host "Joining Domain '$Domain' into '$TargetOU' using $TargetDCHostname..."
 try {
     Add-Computer -DomainName $Domain -Credential $Cred -OUPath $TargetOU -Server $TargetDCHostname -ErrorAction Stop
-    Write-Host "Success: Computer '$ComputerName' successfully joined to domain '$Domain'." -ForegroundColor Green
+    Write-Host "Success - Computer '$ComputerName' successfully joined to domain '$Domain'." -ForegroundColor Green
 }
 catch {
     Write-Error "Join failed. Error: $_"
@@ -333,7 +315,7 @@ catch {
 }
 
 # ==============================================================================
-# --- STEP 4: ADD TO AD SECURITY GROUPS (With LDAPS -> LDAP Auto-Fallback) ---
+# --- STEP 4: ADD TO AD SECURITY GROUPS (Resilient with Port 389 Fallback) ---
 # ==============================================================================
 Write-Host "Assigning Computer to AD Groups on $TargetDCHostname via $ActiveProtocol..." -ForegroundColor Cyan
 
@@ -342,20 +324,22 @@ $ComputerDN = "CN=$ComputerName,$TargetOU"
 foreach ($GroupDN in $TargetGroups) {
     if ([string]::IsNullOrWhiteSpace($GroupDN)) { continue }
     
-    Write-Host "Processing AD Security Group: $GroupDN"
+    Write-Host "Processing AD Security Group $GroupDN"
     $Added = $false
 
-    # 1. Primary Attempt using the active protocol (LDAPS:636 or LDAP:389)
+    # 1. Primary Attempt using the active protocol
     try {
-        $GroupLdapPath    = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$GroupDN"
-        $GroupObject      = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
-        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$ComputerDN"
+        $GroupLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$GroupDN"
+        $GroupObject   = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
+        
+        # Test directory binding by checking Guid before invoking
+        $null = $GroupObject.Guid
 
-        # Invoke LDAP 'Add' method targeting the pinned DC
+        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$ActiveLdapPort/$ComputerDN"
         $GroupObject.Invoke("Add", $ComputerLdapPath)
         $GroupObject.CommitChanges()
 
-        Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname ($ActiveProtocol)." -ForegroundColor Green
+        Write-Host "Success - Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname ($ActiveProtocol)." -ForegroundColor Green
         $Added = $true
     }
     catch {
@@ -363,28 +347,36 @@ foreach ($GroupDN in $TargetGroups) {
         
         # Check if already a member (HRESULT 0x80071392 / 'The object already exists')
         if ($ErrMessage -match "already exists|already a member" -or ($_.Exception.InnerException -and $_.Exception.InnerException.Message -match "already exists|already a member")) {
-            Write-Host "Notice: Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
+            Write-Host "Notice - Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
             $Added = $true
         }
         else {
-            # 2. IF LDAPS (Port 636) FAILED, FALL BACK TO STANDARD LDAP (Port 389)
-            if ($ActiveLdapPort -eq 636 -and $AllowLdapFallback) {
-                Write-Warning "LDAPS group addition failed for '$GroupDN' ($ErrMessage)."
+            # 2. IMMEDIATE FALLBACK TO STANDARD LDAP (Port 389)
+            if ($AllowLdapFallback) {
+                Write-Warning "Group addition failed with $ActiveProtocol ($ErrMessage)."
                 Write-Warning "Attempting immediate fallback to Standard LDAP (Port 389) with Kerberos/NTLM..."
                 
                 try {
-                    $FallbackAuthType     = [System.DirectoryServices.AuthenticationTypes]::Secure
-                    $GroupFallbackPath    = "LDAP://$($TargetDCHostname):389/$GroupDN"
-                    $GroupFallbackObj     = New-Object System.DirectoryServices.DirectoryEntry($GroupFallbackPath, $PlainUser, $PlainPass, $FallbackAuthType)
-                    $ComputerFallbackPath = "LDAP://$($TargetDCHostname):389/$ComputerDN"
+                    $FallbackAuthType  = [System.DirectoryServices.AuthenticationTypes]::Secure
+                    $GroupFallbackPath = "LDAP://$($TargetDCHostname):389/$GroupDN"
+                    $GroupFallbackObj  = New-Object System.DirectoryServices.DirectoryEntry($GroupFallbackPath, $PlainUser, $PlainPass, $FallbackAuthType)
                     
-                    $GroupFallbackObj.Invoke("Add", $ComputerFallbackPath)
+                    # Force bind
+                    $null = $GroupFallbackObj.Guid
+                    
+                    # Try with DC port 389 path, then fallback to relative DN
+                    try {
+                        $GroupFallbackObj.Invoke("Add", "LDAP://$($TargetDCHostname):389/$ComputerDN")
+                    }
+                    catch {
+                        $GroupFallbackObj.Invoke("Add", "LDAP://$ComputerDN")
+                    }
                     $GroupFallbackObj.CommitChanges()
                     
-                    Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via Standard LDAP (Port 389 Fallback)." -ForegroundColor Green
+                    Write-Host "Success - Added '$ComputerName' to group '$GroupDN' via Standard LDAP (Port 389 Fallback)." -ForegroundColor Green
                     $Added = $true
                     
-                    # Switch ActiveProtocol to port 389 for any remaining groups to prevent duplicate timeouts
+                    # Permanently switch active port to 389 so remaining groups succeed instantly
                     $ActiveLdapPort = 389
                     $ActiveAuthType = $FallbackAuthType
                     $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"
@@ -392,10 +384,10 @@ foreach ($GroupDN in $TargetGroups) {
                 catch {
                     $FallbackErrMsg = $_.Exception.Message
                     if ($FallbackErrMsg -match "already exists|already a member") {
-                        Write-Host "Notice: Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
+                        Write-Host "Notice - Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
                         $Added = $true
                     } else {
-                        Write-Error "Failed to add to group '$GroupDN' even after LDAP fallback. Error: $FallbackErrMsg"
+                        Write-Error "Failed to add to group '$GroupDN' on both LDAPS and LDAP fallback. Error: $FallbackErrMsg"
                         if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
                     }
                 }

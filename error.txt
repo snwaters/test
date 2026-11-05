@@ -83,3 +83,16 @@ TCP Port 636 is OPEN on 'dfw1-dc1.turner-industries.com'.
 -----------------------------------------------------------------
 Validating Secure LDAP (LDAPS port 636) on dfw1-dc1.turner-industries.com...
 WARNING: Secure LDAP (Port 636) test failed on dfw1-dc1.turner-industries.com - Exception calling "FindOne" with "0" argument(s): "The server is not operational.
+
+
+
+
+
+
+At C:\Users\Administrator\Downloads\Jointodomainwithladps.ps1:266 char:34
++         $LdapsTestPath = "LDAP://$TargetDCHostname:$PreferredLdapPort ...
++                                  ~~~~~~~~~~~~~~~~~~
+Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : InvalidVariableReferenceWithDrive
+ 

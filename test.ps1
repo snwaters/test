@@ -33,7 +33,7 @@
 param(
     # Optional field to test a specific LDAPS server (hostname, FQDN, or host:port).
     # If left blank, the script proceeds as usual with dynamic DC discovery.
-    [string]$TestLdapsServer = "server dfw1-dc1",
+    [string]$TestLdapsServer = "dfw1-dc1",
 
     [switch]$ForceRejoin = $false
 )

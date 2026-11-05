@@ -51,4 +51,20 @@ At C:\Users\Administrator\Downloads\test.ps1:404 char:17
 +                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException
     + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException,test.ps1
- 
+
+
+
+
+
+
+
+At C:\Users\Administrator\Downloads\test.ps1:232 char:77
++ ... P (Port $PreferredLdapPort) test failed on $TargetDCHostname: $($_.Ex ...
++                                                ~~~~~~~~~~~~~~~~~~
+Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
+At C:\Users\Administrator\Downloads\test.ps1:260 char:59
++ ... ning "Notice during AD computer cleanup with $ActiveProtocol: $($_.Ex ...
++                                                  ~~~~~~~~~~~~~~~~
+Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : InvalidVariableReferenceWithDrive

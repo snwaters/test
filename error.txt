@@ -68,3 +68,18 @@ At C:\Users\Administrator\Downloads\test.ps1:260 char:59
 Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
     + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
     + FullyQualifiedErrorId : InvalidVariableReferenceWithDrive
+
+
+
+
+
+Checking current domain membership for 'C07515-11T'...
+Confirmed - Computer is in workgroup 'WORKGROUP' (Not joined to any domain).
+Proceeding with automated domain join to 'turner-industries.com'...
+-----------------------------------------------------------------
+Specific LDAPS test server configured - 'dfw1-dc1'
+Testing TCP Port 636 on 'dfw1-dc1.turner-industries.com'...
+TCP Port 636 is OPEN on 'dfw1-dc1.turner-industries.com'.
+-----------------------------------------------------------------
+Validating Secure LDAP (LDAPS port 636) on dfw1-dc1.turner-industries.com...
+WARNING: Secure LDAP (Port 636) test failed on dfw1-dc1.turner-industries.com - Exception calling "FindOne" with "0" argument(s): "The server is not operational.

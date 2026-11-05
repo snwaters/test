@@ -37,10 +37,10 @@ if errorlevel 1 goto :YES
 
 :YES
 echo You pressed Yes!
-start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/JointoDomain.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\JointoDomain.ps1
-start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\JointoDomain.ps1"
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/install.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\install.ps1
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\install.ps1"
 timeout /t 45
-del /f /q "C:\osdcloud\Scripts\SetupComplete\JointoDomain.ps1"
+del /f /q "C:\osdcloud\Scripts\SetupComplete\install.ps1"
 shutdown /r /f /t 0
 exit
 

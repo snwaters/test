@@ -263,7 +263,7 @@ if ($UseSecureLdap) {
 
     # Attempt 1 - With ServerBind and SecureSocketsLayer
     try {
-        $LdapsTestPath = "LDAP://$TargetDCHostname:$PreferredLdapPort/$DomainDN"
+        $LdapsTestPath = ("LDAP://" + $TargetDCHostname + ":" + $PreferredLdapPort + "/" + $DomainDN)
         $LdapsAuthType = [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::ServerBind
         $TestEntry     = New-Object System.DirectoryServices.DirectoryEntry($LdapsTestPath, $PlainUser, $PlainPass, $LdapsAuthType)
         
@@ -321,7 +321,7 @@ $CleanComputerName = $ComputerName.Trim()
 Write-Host "Searching Active Directory for '$CleanComputerName' across $DomainDN using $ActiveProtocol..." -ForegroundColor Cyan
 
 # Determine correct ADSI path (Never pass :389 to ADSI to allow native Kerberos/NTLM authentication)
-$SearchLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$DomainDN" } else { "LDAP://$TargetDCHostname/$DomainDN" }
+$SearchLdapPath = if ($ActiveLdapPort -eq 636) { ("LDAP://" + $TargetDCHostname + ":636/" + $DomainDN) } else { ("LDAP://" + $TargetDCHostname + "/" + $DomainDN) }
 
 $FoundComputers = @()
 try {
@@ -435,7 +435,7 @@ if ($FoundComputers.Count -gt 0) {
 
     # Verification Query - Confirm stale account is completely removed before joining
     try {
-        $VerifyPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$DomainDN" } else { "LDAP://$TargetDCHostname/$DomainDN" }
+        $VerifyPath = if ($ActiveLdapPort -eq 636) { ("LDAP://" + $TargetDCHostname + ":636/" + $DomainDN) } else { ("LDAP://" + $TargetDCHostname + "/" + $DomainDN) }
         $VerifyRoot = New-Object System.DirectoryServices.DirectoryEntry($VerifyPath, $PlainUser, $PlainPass, $ActiveAuthType)
         $VerifySearcher = New-Object System.DirectoryServices.DirectorySearcher($VerifyRoot)
         $VerifySearcher.Filter = '(&(objectClass=computer)(sAMAccountName=' + $CleanComputerName + '$))'
@@ -481,13 +481,13 @@ foreach ($GroupDN in $TargetGroups) {
 
     # 1. Primary Attempt using the active protocol
     try {
-        $GroupLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$GroupDN" } else { "LDAP://$TargetDCHostname/$GroupDN" }
+        $GroupLdapPath = if ($ActiveLdapPort -eq 636) { ("LDAP://" + $TargetDCHostname + ":636/" + $GroupDN) } else { ("LDAP://" + $TargetDCHostname + "/" + $GroupDN) }
         $GroupObject   = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $ActiveAuthType)
         
         # Test directory binding by checking Guid before invoking
         $null = $GroupObject.Guid
 
-        $ComputerLdapPath = if ($ActiveLdapPort -eq 636) { "LDAP://$TargetDCHostname:636/$ComputerDN" } else { "LDAP://$TargetDCHostname/$ComputerDN" }
+        $ComputerLdapPath = if ($ActiveLdapPort -eq 636) { ("LDAP://" + $TargetDCHostname + ":636/" + $ComputerDN) } else { ("LDAP://" + $TargetDCHostname + "/" + $ComputerDN) }
         $GroupObject.Invoke("Add", $ComputerLdapPath)
         $GroupObject.CommitChanges()
 

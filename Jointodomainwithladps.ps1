@@ -53,7 +53,7 @@ $TargetGroups = @(
 # Secure LDAP (LDAPS) & Fallback Preferences
 $UseSecureLdap      = $true # Preferred transport: LDAPS (TLS/SSL)
 $PreferredLdapPort  = 636     # Standard LDAPS: 636
-$AllowLdapFallback  = $true # Fall back to port 389 if LDAPS fails
+$AllowLdapFallback  = $false # Fall back to port 389 if LDAPS fails
 
 $ComputerName = $env:COMPUTERNAME
 

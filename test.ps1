@@ -98,7 +98,7 @@ if ($IsJoined) {
             }
         }
         catch {
-            Write-Warning "Could not verify secure channel: $_"
+            Write-Warning "Could not verify secure channel - $_"
         }
 
         if ($ForceRejoin) {
@@ -113,12 +113,12 @@ if ($IsJoined) {
     }
     else {
         # Joined to a DIFFERENT domain
-        Write-Warning "CONFLICT: Computer is currently joined to a different domain: '$CurrentDomain' (Target is '$Domain')."
+        Write-Warning "CONFLICT - Computer is currently joined to a different domain - '$CurrentDomain' (Target is '$Domain')."
         if (-not $ForceRejoin) {
             Write-Error "Halting. To disjoin from '$CurrentDomain' and rejoin '$Domain', re-run with -ForceRejoin or disjoin manually."
             exit 2
         }
-        Write-Warning "ForceRejoin switch active: Will attempt migration from '$CurrentDomain' to '$Domain'."
+        Write-Warning "ForceRejoin switch active - Will attempt migration from '$CurrentDomain' to '$Domain'."
     }
 }
 else {
@@ -181,7 +181,7 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
             Write-Host "Success! Located Domain Controller $TargetDCHostname ($BestDCIP)"
         }
         catch {
-            Write-Warning "Attempt $($Attempt)/$($MaxAttempts): DNS not ready yet. Waiting 3s..."
+            Write-Warning "Attempt $($Attempt) of $($MaxAttempts) - DNS not ready yet. Waiting 3s..."
             Start-Sleep -Seconds 3
         }
     }
@@ -195,7 +195,7 @@ if ($TargetDCHostname -notlike "*.*" -and -not [string]::IsNullOrEmpty($TargetDC
 
 # --- SAFETY CHECK ---
 if ([string]::IsNullOrEmpty($TargetDCHostname)) {
-    Write-Error "CRITICAL FAILURE: Could not resolve a Domain Controller after $MaxAttempts attempts."
+    Write-Error "CRITICAL FAILURE - Could not resolve a Domain Controller after $MaxAttempts attempts."
     Write-Error "Verify network link, DHCP lease, and DNS server configuration."
     exit 1
 }
@@ -229,9 +229,9 @@ if ($UseSecureLdap) {
         Write-Host "Success - Verified LDAPS connection and TLS handshake with $TargetDCHostname." -ForegroundColor Green
     }
     catch {
-        Write-Warning "Secure LDAP (Port $PreferredLdapPort) test failed on $TargetDCHostname: $($_.Exception.Message)"
+        Write-Warning "Secure LDAP (Port $PreferredLdapPort) test failed on $TargetDCHostname - $($_.Exception.Message)"
         if ($AllowLdapFallback) {
-            Write-Warning "AUTOMATIC FALLBACK: Switching to Standard LDAP (Port 389) with Kerberos/NTLM authentication..."
+            Write-Warning "AUTOMATIC FALLBACK - Switching to Standard LDAP (Port 389) with Kerberos/NTLM authentication..."
             $ActiveLdapPort = 389
             $ActiveAuthType = [System.DirectoryServices.AuthenticationTypes]::Secure
             $ActiveProtocol = "Standard LDAP (Port 389 - Fallback Active)"
@@ -257,7 +257,7 @@ try {
     $ExistingComputerResult = $Searcher.FindOne()
 }
 catch {
-    Write-Warning "Notice during AD computer cleanup with $ActiveProtocol: $($_.Exception.Message)"
+    Write-Warning "Notice during AD computer cleanup with $ActiveProtocol - $($_.Exception.Message)"
     # If search failed on port 636, immediately fall back to port 389
     if ($ActiveLdapPort -ne 389 -and $AllowLdapFallback) {
         Write-Warning "Falling back to Standard LDAP (Port 389) for computer search..."
@@ -274,7 +274,7 @@ catch {
             Write-Host "Success - Recovered and executed search via Standard LDAP (Port 389)." -ForegroundColor Green
         }
         catch {
-            Write-Warning "Standard LDAP fallback search also reported: $($_.Exception.Message)"
+            Write-Warning "Standard LDAP fallback search also reported - $($_.Exception.Message)"
         }
     }
 }
@@ -283,7 +283,7 @@ catch {
 if ($null -ne $ExistingComputerResult) {
     try {
         $ExistingDN = $ExistingComputerResult.Properties["distinguishedname"][0]
-        Write-Warning "CONFLICT DETECTED: Found existing computer object in AD: $ExistingDN"
+        Write-Warning "CONFLICT DETECTED - Found existing computer object in AD - $ExistingDN"
         Write-Host "Deleting stale computer object from $TargetDCHostname via $ActiveProtocol before joining..." -ForegroundColor Yellow
         
         $ComputerEntry = $ExistingComputerResult.GetDirectoryEntry()
@@ -297,7 +297,7 @@ if ($null -ne $ExistingComputerResult) {
         Start-Sleep -Seconds 3
     }
     catch {
-        Write-Warning "Could not delete stale computer object: $($_.Exception.Message)"
+        Write-Warning "Could not delete stale computer object - $($_.Exception.Message)"
     }
 } else {
     Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed. Proceeding to join."
@@ -310,7 +310,7 @@ try {
     Write-Host "Success - Computer '$ComputerName' successfully joined to domain '$Domain'." -ForegroundColor Green
 }
 catch {
-    Write-Error "Join failed. Error: $_"
+    Write-Error "Join failed - $_"
     exit 1
 }
 
@@ -353,7 +353,7 @@ foreach ($GroupDN in $TargetGroups) {
         else {
             # 2. IMMEDIATE FALLBACK TO STANDARD LDAP (Port 389)
             if ($AllowLdapFallback) {
-                Write-Warning "Group addition failed with $ActiveProtocol ($ErrMessage)."
+                Write-Warning "Group addition failed with $ActiveProtocol - $ErrMessage"
                 Write-Warning "Attempting immediate fallback to Standard LDAP (Port 389) with Kerberos/NTLM..."
                 
                 try {
@@ -387,13 +387,13 @@ foreach ($GroupDN in $TargetGroups) {
                         Write-Host "Notice - Computer '$ComputerName' is already a member of group '$GroupDN'." -ForegroundColor Yellow
                         $Added = $true
                     } else {
-                        Write-Error "Failed to add to group '$GroupDN' on both LDAPS and LDAP fallback. Error: $FallbackErrMsg"
+                        Write-Error "Failed to add to group '$GroupDN' on both LDAPS and LDAP fallback - $FallbackErrMsg"
                         if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
                     }
                 }
             }
             else {
-                Write-Error "Failed to add to group '$GroupDN'. Error: $ErrMessage"
+                Write-Error "Failed to add to group '$GroupDN' - $ErrMessage"
                 if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
             }
         }

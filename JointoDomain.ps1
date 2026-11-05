@@ -2,7 +2,7 @@
 ================================================================================
 .SYNOPSIS
     Automated Active Directory Domain Join with Pre-Flight Domain Membership
-    Check, Pre-Join Computer Account Cleanup, and Post-Join Security Group Provisioning.
+    Check, Secure LDAP (LDAPS) Account Cleanup, and Post-Join Group Provisioning.
 
 .DESCRIPTION
     0. PRE-FLIGHT CHECK: Checks if the local machine is already joined to the
@@ -10,10 +10,12 @@
        and protects against self-destructive AD account deletion.
     1. Discovers and pins to a healthy Domain Controller via DNS with retries.
     2. Searches Active Directory for any pre-existing/stale computer account
-       matching the current hostname and deletes it (.NET ADSI) to eliminate
-       "Account already exists", duplicate SPN, or "Access denied" join conflicts.
+       matching the current hostname and deletes it using SECURE LDAP (LDAPS / Port 636)
+       over .NET ADSI to eliminate "Account already exists", duplicate SPN, or
+       "Access denied" join conflicts while encrypting all directory traffic.
     3. Joins the domain into the target OU targeting the pinned DC.
-    4. Adds the newly joined computer to designated security groups on the same DC.
+    4. Adds the newly joined computer to designated security groups on the same
+       pinned DC over Secure LDAP (LDAPS).
 ================================================================================
 #>
 
@@ -36,7 +38,19 @@ $TargetGroups = @(
     "CN=Grp_ClientComputerCert,OU=Helpdesk ModifyGroups,DC=turner-industries,DC=com"
 )
 
+# Secure LDAP (LDAPS) Settings
+$UseSecureLdap = $true # Enforce TLS/SSL encryption for directory operations
+$LdapPort      = 636     # Standard LDAPS: 636, LDAP: 389
+
 $ComputerName = $env:COMPUTERNAME
+
+# Configure .NET ADSI Authentication Types
+# SecureSocketsLayer (0x2) mandates TLS/SSL over port 636; Secure (0x1) enables Kerberos/NTLM signing
+$LdapAuthType = if ($UseSecureLdap) {
+    [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer -bor [System.DirectoryServices.AuthenticationTypes]::Secure
+} else {
+    [System.DirectoryServices.AuthenticationTypes]::Secure
+}
 
 # ==============================================================================
 # --- STEP 0: PRE-FLIGHT DOMAIN MEMBERSHIP CHECK ---
@@ -87,7 +101,7 @@ if ($IsJoined) {
         } else {
             Write-Host "=================================================================" -ForegroundColor Green
             Write-Host "SUCCESS: Machine is already a member of '$Domain'. No action needed." -ForegroundColor Green
-            Write-Host "Exiting cleanly (Exit Code 0)." -ForegroundColor Green
+            Write-Host "Exiting cleanly (Exit Code 0). Safe from redundant join or AD deletion." -ForegroundColor Green
             Write-Host "=================================================================" -ForegroundColor Green
             exit 0
         }
@@ -123,7 +137,7 @@ while ($null -eq $TargetDCHostname -and $Attempt -lt $MaxAttempts) {
         # 2. Select first available IP
         $BestDCIP  = $DomainDNS.AddressList[0].IPAddressToString
         
-        # 3. Resolve that IP to real Hostname (Required for Kerberos SPN / LDAP binding)
+        # 3. Resolve that IP to real Hostname (Required for TLS/SSL Certificate Subject Name and Kerberos SPN)
         $DCHostEntry = [System.Net.Dns]::GetHostEntry($BestDCIP)
         $TargetDCHostname = $DCHostEntry.HostName
 
@@ -142,10 +156,10 @@ if ([string]::IsNullOrEmpty($TargetDCHostname)) {
     exit 1
 }
 
-# --- STEP 2: ACTIVE DIRECTORY PRE-JOIN CLEANUP (Pure .NET ADSI - Zero RSAT Dependency) ---
-# Deletes any existing computer account matching this hostname across the domain
-# to prevent "Account Already Exists", duplicate SPN, or "Access Denied" join conflicts.
-Write-Host "Searching Active Directory for existing computer account '$ComputerName' on $TargetDCHostname..."
+# --- STEP 2: ACTIVE DIRECTORY PRE-JOIN CLEANUP (Pure .NET ADSI over SECURE LDAP - Zero RSAT Dependency) ---
+# Deletes any existing computer account matching this hostname across the domain via LDAPS (Port 636)
+# to prevent "Account Already Exists", duplicate SPN, or "Access Denied" join conflicts with encrypted transport.
+Write-Host "Searching Active Directory for '$ComputerName' on $TargetDCHostname via Secure LDAP (Port $LdapPort)..." -ForegroundColor Cyan
 
 $PlainUser = $Cred.UserName
 $PlainPass = $Cred.GetNetworkCredential().Password
@@ -153,10 +167,10 @@ $PlainPass = $Cred.GetNetworkCredential().Password
 try {
     # 1. Determine Search Base DN (Search entire domain root to catch stale objects in any OU)
     $DomainDN = (($Domain.Split('.') | ForEach-Object { "DC=$_" }) -join ',')
-    $SearchLdapPath = "LDAP://$TargetDCHostname/$DomainDN"
+    $SearchLdapPath = "LDAP://$($TargetDCHostname):$LdapPort/$DomainDN"
     
-    # 2. Bind to Directory with explicit credentials targeted to pinned DC
-    $SearchRoot = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, "Secure")
+    # 2. Bind to Directory with explicit credentials targeted to pinned DC using Secure LDAP (TLS/SSL)
+    $SearchRoot = New-Object System.DirectoryServices.DirectoryEntry($SearchLdapPath, $PlainUser, $PlainPass, $LdapAuthType)
     
     # 3. Create DirectorySearcher to locate the computer by sAMAccountName ($ComputerName$)
     $Searcher = New-Object System.DirectoryServices.DirectorySearcher($SearchRoot)
@@ -169,28 +183,28 @@ try {
     if ($null -ne $ExistingComputerResult) {
         $ExistingDN = $ExistingComputerResult.Properties["distinguishedname"][0]
         Write-Warning "CONFLICT DETECTED: Found existing computer object in AD: $ExistingDN"
-        Write-Host "Deleting stale computer object from $TargetDCHostname before joining to ensure a clean state..."
+        Write-Host "Deleting stale computer object from $TargetDCHostname via Secure LDAP (LDAPS) before joining..." -ForegroundColor Yellow
         
-        # 4. Bind directly to the computer object to invoke deletion
+        # 4. Bind directly to the computer object with LDAPS to invoke deletion
         $ComputerEntry = $ExistingComputerResult.GetDirectoryEntry()
         $ComputerEntry.Username = $PlainUser
         $ComputerEntry.Password = $PlainPass
-        $ComputerEntry.AuthenticationType = [System.DirectoryServices.AuthenticationTypes]::Secure
+        $ComputerEntry.AuthenticationType = $LdapAuthType
         
         # DeleteTree() deletes the computer account and all nested leaf objects (e.g., BitLocker keys, TPM records)
         $ComputerEntry.DeleteTree()
         
-        Write-Host "Success: Stale computer account deleted from Active Directory ($TargetDCHostname)."
+        Write-Host "Success: Stale computer account deleted from Active Directory ($TargetDCHostname) via Secure LDAP." -ForegroundColor Green
         
         # 5. Brief pause to allow local DC database to commit tombstone before Add-Computer executes
         Write-Host "Waiting 3s for directory commit to settle..."
         Start-Sleep -Seconds 3
     } else {
-        Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed. Proceeding to join."
+        Write-Host "No existing computer account found with name '$ComputerName'. Clean state confirmed via Secure LDAP. Proceeding to join."
     }
 }
 catch {
-    Write-Warning "Notice during AD computer cleanup: $_"
+    Write-Warning "Notice during Secure LDAP (LDAPS) AD computer cleanup: $_"
     if ($_.Exception.InnerException) { Write-Warning $_.Exception.InnerException.Message }
     Write-Host "Continuing with domain join attempt..."
 }
@@ -199,15 +213,15 @@ catch {
 Write-Host "Joining Domain '$Domain' into '$TargetOU' using $TargetDCHostname..."
 try {
     Add-Computer -DomainName $Domain -Credential $Cred -OUPath $TargetOU -Server $TargetDCHostname -ErrorAction Stop
-    Write-Host "Success: Computer '$ComputerName' successfully joined to domain '$Domain'."
+    Write-Host "Success: Computer '$ComputerName' successfully joined to domain '$Domain'." -ForegroundColor Green
 }
 catch {
     Write-Error "Join failed. Error: $_"
     exit 1
 }
 
-# --- STEP 4: ADD TO AD SECURITY GROUPS (Targeting SAME DC via ADSI) ---
-Write-Host "Assigning Computer to AD Groups on $TargetDCHostname..."
+# --- STEP 4: ADD TO AD SECURITY GROUPS (Targeting SAME DC via SECURE LDAP / LDAPS) ---
+Write-Host "Assigning Computer to AD Groups on $TargetDCHostname via Secure LDAP (Port $LdapPort)..." -ForegroundColor Cyan
 
 $ComputerDN = "CN=$ComputerName,$TargetOU"
 $PlainUser  = $Cred.UserName
@@ -216,22 +230,23 @@ $PlainPass  = $Cred.GetNetworkCredential().Password
 foreach ($GroupDN in $TargetGroups) {
     if ([string]::IsNullOrWhiteSpace($GroupDN)) { continue }
     try {
-        Write-Host "Adding to group: $GroupDN"
-        $LdapPath    = "LDAP://$TargetDCHostname/$GroupDN"
-        $GroupObject = New-Object System.DirectoryServices.DirectoryEntry($LdapPath, $PlainUser, $PlainPass, "Secure")
+        Write-Host "Adding to group via LDAPS: $GroupDN"
+        $GroupLdapPath = "LDAP://$($TargetDCHostname):$LdapPort/$GroupDN"
+        $GroupObject   = New-Object System.DirectoryServices.DirectoryEntry($GroupLdapPath, $PlainUser, $PlainPass, $LdapAuthType)
 
-        # Invoke LDAP 'Add' method with the computer's distinguished name
-        $GroupObject.Invoke("Add", "LDAP://$ComputerDN")
+        # Invoke LDAP 'Add' method targeting the pinned DC over Secure LDAP
+        $ComputerLdapPath = "LDAP://$($TargetDCHostname):$LdapPort/$ComputerDN"
+        $GroupObject.Invoke("Add", $ComputerLdapPath)
         $GroupObject.CommitChanges()
 
-        Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname."
+        Write-Host "Success: Added '$ComputerName' to group '$GroupDN' via $TargetDCHostname over Secure LDAP." -ForegroundColor Green
     }
     catch {
-        Write-Error "Failed to add to group '$GroupDN'. Error: $_"
+        Write-Error "Failed to add to group '$GroupDN' via LDAPS. Error: $_"
         if ($_.Exception.InnerException) { Write-Error $_.Exception.InnerException.Message }
     }
 }
 
 Write-Host "================================================================="
-Write-Host "Domain Join and Active Directory Provisioning Completed Successfully."
+Write-Host "Domain Join and Active Directory Provisioning Completed Successfully (over Secure LDAP)."
 Write-Host "================================================================="

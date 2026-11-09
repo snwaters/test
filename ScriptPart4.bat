@@ -21,7 +21,7 @@ start /wait c:\windows\temp\SentinelOneInstaller.exe -q -t eyJ1cmwiOiAiaHR0cHM6L
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Join-TurnerDomain_second_try.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\Join-TurnerDomain_second_try.ps1
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Join-TurnerDomain_second_try.bat -OutFile C:\osdcloud\Scripts\SetupComplete\Join-TurnerDomain_second_try.bat
 
-start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/ScriptPart4.bat -OutFile C:\osdcloud\Scripts\SetupComplete\ScriptPart5.bat
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/ScriptPart5.bat -OutFile C:\osdcloud\Scripts\SetupComplete\ScriptPart5.bat
 echo Continuing to part 5 after reboot...
         reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "MyScriptPart5" /t REG_SZ /d "C:\osdcloud\Scripts\SetupComplete\ScriptPart5.bat" /f
 

@@ -40,6 +40,11 @@ start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Jointodomainwithladps.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1"
 timeout /t 45
+md C:\Users\Default\AppData\Roaming\Microsoft\Network
+md C:\Users\Default\AppData\Roaming\Microsoft\Network\Connections
+md c:\Users\Default\AppData\Roaming\Microsoft\Network\Connections\Pbk
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/rasphone.pbk -OutFile C:\Users\Default\AppData\Roaming\Microsoft\Network\Connections\Pbk\rasphone.pbk 
+
 del /f /q "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
 del /f /q "C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1"
 shutdown /r /f /t 0

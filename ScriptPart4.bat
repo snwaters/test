@@ -47,8 +47,8 @@ exit
 
 :NO
 echo You pressed No!
-start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/add_computer_to_full_JC_managed.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1
-start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/add_to_jc_only_managed.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\add_to_jc_only_managed.ps1
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_to_jc_only_managed.ps1"
 shutdown /r /f /t 0
 exit
 

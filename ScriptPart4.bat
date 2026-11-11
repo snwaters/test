@@ -24,8 +24,7 @@ start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubus
 echo Continuing to part 5 after reboot...
         reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "MyScriptPart5" /t REG_SZ /d "C:\osdcloud\Scripts\SetupComplete\ScriptPart5.bat" /f
 
-timeout /t 190
-del /f /q "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
+
 
 @echo off
 echo .
@@ -41,6 +40,7 @@ start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Jointodomainwithladps.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1"
 timeout /t 45
+del /f /q "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
 del /f /q "C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1"
 shutdown /r /f /t 0
 exit

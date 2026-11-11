@@ -11,8 +11,7 @@ start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "cd $env:
 
 timeout /t 190
 
-start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/add_computer_to_full_JC_managed.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1
-start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
+
 
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Download_S1.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\Download_S1.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Download_S1.ps1"
@@ -37,6 +36,8 @@ if errorlevel 1 goto :YES
 
 :YES
 echo You pressed Yes!
+start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/add_computer_to_full_JC_managed.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1
+start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\add_computer_to_full_JC_managed.ps1"
 start /wait powershell.exe -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/snwaters/test/refs/heads/main/Jointodomainwithladps.ps1 -OutFile C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1
 start /wait powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\Jointodomainwithladps.ps1"
 timeout /t 45

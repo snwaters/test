@@ -49,7 +49,7 @@ try {
     if (-not (Test-Path -Path $runOncePath)) {
         New-Item -Path $runOncePath -Force -ErrorAction SilentlyContinue | Out-Null
     }
-    $part4Command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\osdcloud\Scripts\SetupComplete\ScriptPart4.ps1\"'
+    $part4Command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\osdcloud\Scripts\SetupComplete\ScriptPart4.ps1"'
     Set-ItemProperty -Path $runOncePath -Name 'MyScriptPart4' -Value $part4Command -Force -ErrorAction Continue
     Write-Host "Registered RunOnce entry: MyScriptPart4 -> $part4Command" -ForegroundColor Green
 } catch {
